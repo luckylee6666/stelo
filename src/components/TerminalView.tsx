@@ -17,6 +17,7 @@ import { OfficePreview, isOfficePath } from "./OfficePreview";
 import { useState } from "react";
 import { usePrefs } from "../stores/prefs";
 import { findTheme } from "../lib/themes";
+import { confirm } from "../lib/dialog";
 
 const termRefByKey = new Map<string, XTerm>();
 const fitRefByKey = new Map<string, FitAddon>();
@@ -253,16 +254,27 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
           if (lineCount > 3) {
             const preview = pasted
               .split(/\r\n|\r|\n/)
-              .slice(0, 3)
-              .join("\n");
-            const ok = window.confirm(
-              `将粘贴 ${lineCount} 行到终端：\n\n${preview}${
-                lineCount > 3 ? "\n…" : ""
-              }\n\n确认粘贴？`,
-            );
-            if (!ok) return;
+              .slice(0, 6)
+              .join("\n") + (lineCount > 6 ? `\n... (还有 ${lineCount - 6} 行)` : "");
+            // async 流：等用户确认期间挂起这次输入；不确认就 return 不发送
+            (async () => {
+              const ok = await confirm({
+                title: `粘贴 ${lineCount} 行到终端`,
+                message: "多行粘贴可能误操作（如把命令直接执行）。请检查内容后再确认。",
+                preview,
+                confirmText: "粘贴",
+              });
+              if (!ok) return;
+              await sendDataAndSync(d);
+            })();
+            return;
           }
         }
+        sendDataAndSync(d);
+      });
+
+      // 把"记命令历史 + invoke ssh_send + syncInput 广播"打包，可被 paste-confirmed 路径复用
+      async function sendDataAndSync(d: string) {
         // 追踪用户输入，回车时记命令到历史
         for (const ch of d) {
           if (inEscape) {
@@ -301,25 +313,25 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
           .getState()
           .sessions.find((x) => x.id === sessionId);
         if (me?.syncInput) {
-          // 安全护栏：粘贴长串（bracketed paste 内含 >20 字符，且不像普通命令的回车结尾）→
-          // 大概率是密码 / token / 配置块。同步广播到所有勾选会话很危险，弹确认。
+          // 安全护栏：粘贴长串大概率是密码/token/配置块，广播很危险，弹确认。
           const pasteMatchSync = d.match(/\x1b\[200~([\s\S]*?)\x1b\[201~/);
           let allowSync = true;
           if (pasteMatchSync) {
             const body = pasteMatchSync[1];
             if (body.length > 20) {
-              const preview = body.slice(0, 60).replace(/\r|\n/g, "↵");
-              allowSync = window.confirm(
-                `⚠️ 多会话同步输入已开启，将把这段粘贴内容**同时发往所有同步会话**（共 ${
-                  useSessionStore
-                    .getState()
-                    .sessions.filter(
-                      (x) => x.syncInput && x.backendId && x.kind === "ssh",
-                    ).length
-                } 个）。\n\n如果是密码 / API Key / token，建议**取消**：\n\n${preview}${
-                  body.length > 60 ? "..." : ""
-                }\n\n确认广播？`,
-              );
+              const preview = body.slice(0, 200).replace(/\r/g, "");
+              const targetCount = useSessionStore
+                .getState()
+                .sessions.filter(
+                  (x) => x.syncInput && x.backendId && x.kind === "ssh",
+                ).length;
+              allowSync = await confirm({
+                title: "广播粘贴内容到所有同步会话？",
+                message: `多会话同步输入已开启，这段粘贴会同时发往 ${targetCount} 个会话。如果是密码 / API Key / token，请取消。`,
+                preview,
+                confirmText: "广播",
+                warn: true,
+              });
             }
           }
           if (allowSync) {
@@ -336,11 +348,14 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
               invoke("ssh_send", {
                 sessionId: o.backendId,
                 data: d,
-              }).catch(() => {});
+              }).catch((e) => {
+                // 同步广播失败要让用户知道某条 session 有问题，但不阻塞主流
+                console.warn(`syncInput 广播到 ${o.id} 失败:`, e);
+              });
             }
           }
         }
-      });
+      }
     } else {
       // 本地演示模式：回显
       term.writeln("\x1b[1;36m Stelo \x1b[0m\x1b[2m 本地回显模式\x1b[0m");

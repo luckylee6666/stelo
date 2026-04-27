@@ -4,11 +4,10 @@ import {
   open as openFileDialog,
   save as saveFileDialog,
 } from "@tauri-apps/plugin-dialog";
+import { toast } from "sonner";
 import {
   Download,
   Upload,
-  AlertTriangle,
-  Check,
   Loader2,
   Database,
 } from "lucide-react";
@@ -40,14 +39,10 @@ function applyLocalStoragePrefs(prefs: LocalPrefs) {
 
 export function ConfigBackupDialog({ onClose }: Props) {
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
 
   const doExport = async () => {
     if (busy) return;
     setBusy(true);
-    setMsg(null);
-    setErr(null);
     try {
       const prefs = collectLocalStoragePrefs();
       const date = new Date().toISOString().slice(0, 10);
@@ -60,9 +55,10 @@ export function ConfigBackupDialog({ onClose }: Props) {
         return;
       }
       await invoke("config_export_file", { path: target, prefs });
-      setMsg(`已导出到 ${target}`);
+      toast.success("配置已导出", { description: target });
+      onClose();
     } catch (e) {
-      setErr(String(e));
+      toast.error("导出失败", { description: String(e) });
     } finally {
       setBusy(false);
     }
@@ -71,8 +67,6 @@ export function ConfigBackupDialog({ onClose }: Props) {
   const doImport = async () => {
     if (busy) return;
     setBusy(true);
-    setMsg(null);
-    setErr(null);
     try {
       const picked = await openFileDialog({
         multiple: false,
@@ -87,13 +81,12 @@ export function ConfigBackupDialog({ onClose }: Props) {
       if (prefs && typeof prefs === "object") {
         applyLocalStoragePrefs(prefs);
       }
-      setMsg("导入完成。正在刷新数据…");
-      // 触发全量重载
+      toast.success("导入完成，正在刷新…");
       setTimeout(() => {
         window.location.reload();
-      }, 600);
+      }, 800);
     } catch (e) {
-      setErr(String(e));
+      toast.error("导入失败", { description: String(e) });
     } finally {
       setBusy(false);
     }
@@ -143,19 +136,6 @@ export function ConfigBackupDialog({ onClose }: Props) {
             从 JSON 文件导入（全量覆盖）
           </button>
         </div>
-
-        {msg && (
-          <div className="mt-3 flex items-start gap-1.5 rounded border border-emerald-900/60 bg-emerald-950/30 px-2 py-1.5 text-xs text-emerald-200">
-            <Check size={11} className="mt-0.5 shrink-0" />
-            <span className="break-all">{msg}</span>
-          </div>
-        )}
-        {err && (
-          <div className="mt-3 flex items-start gap-1.5 rounded border border-red-900/50 bg-red-950/40 px-2 py-1.5 text-xs text-red-300">
-            <AlertTriangle size={11} className="mt-0.5 shrink-0" />
-            <span className="break-all">{err}</span>
-          </div>
-        )}
 
         <div className="mt-5 flex justify-end">
           <button

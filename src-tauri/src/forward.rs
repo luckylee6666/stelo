@@ -208,14 +208,6 @@ pub fn stop(registry: Arc<DashMap<String, ForwardHandle>>, rule_id: &str) {
     }
 }
 
-pub fn stop_all_for_session(
-    _registry: Arc<DashMap<String, ForwardHandle>>,
-    _session_id: &str,
-) {
-    // 前端维护 ruleId -> sessionId 关系；后端没有会话粒度索引。
-    // 前端在 disconnect 前遍历 forward_stop 即可。
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

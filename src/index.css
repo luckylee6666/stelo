@@ -143,3 +143,140 @@ body,
 .xterm-viewport::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* === 全局 UI 行为基线（让所有按钮/对话框默认有动画 + 反馈，不需要每个组件单独写） === */
+
+/* 任何 disabled 元素：cursor 提示不可点 + 提升透明度反馈到 50%（原 40% 看不清） */
+button:disabled,
+input:disabled,
+textarea:disabled,
+select:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+/* 所有可点击的按钮：默认有 colors 过渡，避免秒切 */
+button:not([data-no-transition]) {
+  transition: background-color 150ms ease, border-color 150ms ease,
+    color 150ms ease, box-shadow 150ms ease;
+}
+
+/* 焦点环统一基线：避免裸默认浏览器蓝 */
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+/* 主题切换过渡：暗/亮模式切换时整体 fade 一下，不刺眼 */
+html {
+  transition: background-color 220ms ease, color 220ms ease;
+}
+
+/* === 商用级 utility class（按需用，不强制） === */
+
+/* 标准输入框 — 高度统一 28px，圆角 6px，焦点蓝环 */
+.s-input {
+  width: 100%;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 20px;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+  outline: none;
+}
+.s-input::placeholder {
+  color: var(--muted);
+  opacity: 0.7;
+}
+.s-input:hover:not(:disabled):not(:focus) {
+  border-color: color-mix(in srgb, var(--border) 50%, var(--accent) 50%);
+}
+.s-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.s-input:disabled {
+  opacity: 0.5;
+}
+
+/* 主按钮（蓝） / 次按钮（边框） / 危险按钮（红） / 警告按钮（琥珀） */
+.s-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  user-select: none;
+}
+.s-btn-primary {
+  background: var(--accent);
+  color: white;
+}
+.s-btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.s-btn-secondary {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--fg);
+}
+.s-btn-secondary:hover:not(:disabled) {
+  background: var(--elev);
+}
+.s-btn-danger {
+  background: #dc2626;
+  color: white;
+}
+.s-btn-danger:hover:not(:disabled) {
+  background: #ef4444;
+}
+.s-btn-warn {
+  background: #d97706;
+  color: white;
+}
+.s-btn-warn:hover:not(:disabled) {
+  background: #f59e0b;
+}
+.s-btn:disabled {
+  opacity: 0.5;
+}
+
+/* tailwindcss-animate 风格：fade-in / zoom-in / slide-in-from-* 关键帧（DialogHost 用） */
+@keyframes anim-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes anim-zoom-in-95 {
+  from { transform: scale(0.95); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+.animate-in {
+  animation-duration: var(--anim-duration, 150ms);
+  animation-timing-function: ease-out;
+  animation-fill-mode: both;
+}
+.fade-in { animation-name: anim-fade-in; }
+.zoom-in-95 { animation-name: anim-zoom-in-95; }
+.duration-150 { --anim-duration: 150ms; }
+.duration-200 { --anim-duration: 200ms; }
+.duration-300 { --anim-duration: 300ms; }
+/* 多个 animate class 同时存在时，并发播放（同一时长） */
+.animate-in.zoom-in-95.fade-in {
+  animation-name: anim-zoom-in-95, anim-fade-in;
+}

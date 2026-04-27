@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Toaster } from "sonner";
 import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
 import { TerminalView } from "./components/TerminalView";
@@ -8,6 +9,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { AiPanel } from "./components/AiPanel";
 import { AiManagerDialog } from "./components/AiManagerDialog";
 import { HostKeyMismatchDialog } from "./components/HostKeyMismatchDialog";
+import { DialogHost } from "./components/DialogHost";
 import { useSessionStore } from "./stores/sessions";
 import { loadAll, startAutoSave } from "./lib/persistence";
 import { usePrefs } from "./stores/prefs";
@@ -143,6 +145,22 @@ function App() {
       />
       {aiMgrOpen && <AiManagerDialog onClose={() => setAiMgrOpen(false)} />}
       <HostKeyMismatchDialog />
+      <DialogHost />
+      <Toaster
+        position="bottom-right"
+        theme="dark"
+        toastOptions={{
+          style: {
+            background: "rgb(23 23 23)",
+            border: "1px solid rgb(64 64 64)",
+            color: "rgb(229 229 229)",
+            fontSize: "13px",
+          },
+          className: "shadow-2xl",
+        }}
+        closeButton
+        richColors
+      />
     </div>
   );
 }
