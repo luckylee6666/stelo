@@ -287,20 +287,43 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
           .getState()
           .sessions.find((x) => x.id === sessionId);
         if (me?.syncInput) {
-          const others = useSessionStore
-            .getState()
-            .sessions.filter(
-              (x) =>
-                x.id !== sessionId &&
-                x.syncInput &&
-                x.backendId &&
-                x.kind === "ssh",
-            );
-          for (const o of others) {
-            invoke("ssh_send", {
-              sessionId: o.backendId,
-              data: d,
-            }).catch(() => {});
+          // 安全护栏：粘贴长串（bracketed paste 内含 >20 字符，且不像普通命令的回车结尾）→
+          // 大概率是密码 / token / 配置块。同步广播到所有勾选会话很危险，弹确认。
+          const pasteMatchSync = d.match(/\x1b\[200~([\s\S]*?)\x1b\[201~/);
+          let allowSync = true;
+          if (pasteMatchSync) {
+            const body = pasteMatchSync[1];
+            if (body.length > 20) {
+              const preview = body.slice(0, 60).replace(/\r|\n/g, "↵");
+              allowSync = window.confirm(
+                `⚠️ 多会话同步输入已开启，将把这段粘贴内容**同时发往所有同步会话**（共 ${
+                  useSessionStore
+                    .getState()
+                    .sessions.filter(
+                      (x) => x.syncInput && x.backendId && x.kind === "ssh",
+                    ).length
+                } 个）。\n\n如果是密码 / API Key / token，建议**取消**：\n\n${preview}${
+                  body.length > 60 ? "..." : ""
+                }\n\n确认广播？`,
+              );
+            }
+          }
+          if (allowSync) {
+            const others = useSessionStore
+              .getState()
+              .sessions.filter(
+                (x) =>
+                  x.id !== sessionId &&
+                  x.syncInput &&
+                  x.backendId &&
+                  x.kind === "ssh",
+              );
+            for (const o of others) {
+              invoke("ssh_send", {
+                sessionId: o.backendId,
+                data: d,
+              }).catch(() => {});
+            }
           }
         }
       });

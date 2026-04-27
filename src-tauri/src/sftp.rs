@@ -52,6 +52,47 @@ fn expand_home(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
+/// 防 SFTP 操作误读/误写敏感本地文件（XSS 通过 invoke 直接调 sftp_upload 时的纵深防御）。
+/// 解析 symlink 后落在 ~/.ssh / ~/.aws / ~/.gnupg / Stelo app data 等位置则拒绝。
+fn validate_local_sftp_path(path: &std::path::Path) -> Result<()> {
+    // 路径不存在时（如 download 目标）用 parent canonicalize
+    let canonical: PathBuf = if path.exists() {
+        match path.canonicalize() {
+            Ok(c) => c,
+            Err(_) => path.to_path_buf(),
+        }
+    } else if let Some(parent) = path.parent() {
+        match parent.canonicalize() {
+            Ok(c) => c.join(path.file_name().unwrap_or_default()),
+            Err(_) => path.to_path_buf(),
+        }
+    } else {
+        path.to_path_buf()
+    };
+    let s = canonical.to_string_lossy().to_lowercase();
+    const FORBIDDEN: &[&str] = &[
+        "/.ssh/",
+        "/.aws/",
+        "/.gnupg/",
+        "/.config/gh/",
+        "/library/keychains/",
+        "/etc/shadow",
+        "/etc/sudoers",
+        "credentials.json",
+        ".master_salt",
+        "audit.log",
+    ];
+    for needle in FORBIDDEN {
+        if s.contains(needle) {
+            return Err(anyhow!(
+                "SFTP 本地路径解析后落在敏感位置（{}）；为防止凭据泄露已拒绝",
+                needle
+            ));
+        }
+    }
+    Ok(())
+}
+
 async fn sftp(handle: &Arc<Handle<SshClient>>) -> Result<SftpSession> {
     let channel = handle
         .channel_open_session()
@@ -191,6 +232,7 @@ pub async fn upload_dir(
     remote_path: String,
 ) -> Result<String> {
     let local = expand_home(&local_path);
+    validate_local_sftp_path(&local)?;
     if !local.is_dir() {
         return Err(anyhow!("not a local directory: {}", local.display()));
     }
@@ -289,6 +331,7 @@ pub async fn upload(
     remote_path: String,
 ) -> Result<String> {
     let local = expand_home(&local_path);
+    validate_local_sftp_path(&local)?;
     if !local.exists() {
         return Err(anyhow!("local file not found: {}", local.display()));
     }
@@ -378,6 +421,7 @@ pub async fn upload_with_sudo(
     password: String,
 ) -> Result<String> {
     let local = expand_home(&local_path);
+    validate_local_sftp_path(&local)?;
     if !local.exists() {
         return Err(anyhow!("local file not found: {}", local.display()));
     }
@@ -640,6 +684,7 @@ pub async fn download(
     let total = meta.size.unwrap_or(0);
 
     let local = PathBuf::from(&local_path);
+    validate_local_sftp_path(&local)?;
     if let Some(parent) = local.parent() {
         tokio::fs::create_dir_all(parent).await.ok();
     }

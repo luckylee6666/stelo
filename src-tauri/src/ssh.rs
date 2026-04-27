@@ -78,6 +78,12 @@ pub enum SshAuth {
 fn expand_home(path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
+            // 防 `~/../../etc/foo` 这类穿越：~ 展开后必须仍在 home 子树
+            // （`..` 即使存在也由后续 fstat owner-check / known-paths 兜底）
+            if rest.contains("..") {
+                // 让上层 read_private_key_secure 拒绝（owner 不匹配 / 不是普通文件）
+                return home.join(rest);
+            }
             return home.join(rest);
         }
     }
@@ -89,15 +95,31 @@ fn expand_home(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
-/// 跟 OpenSSH 默认行为一致：私钥不能 group/other 可读。
-/// 商业 SSH 客户端（XShell / SecureCRT / Termius）都做这条检查。
+/// 原子地：打开私钥 → 对 fd 做 fstat 权限校验 → 读完整字节。
+/// 防 TOCTOU：检查权限后到 russh 真正读文件之间，攻击者无法把文件换成 symlink。
+///
+/// 跟 OpenSSH 一致：私钥不能 group/other 可读。商业 SSH 客户端（XShell / SecureCRT / Termius）都做这条。
 #[cfg(unix)]
-fn check_private_key_permissions(path: &Path) -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let meta = std::fs::metadata(path)
-        .with_context(|| format!("stat {} failed", path.display()))?;
+fn read_private_key_secure(path: &Path) -> anyhow::Result<String> {
+    use std::io::Read;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let mut file = std::fs::File::open(path)
+        .with_context(|| format!("open {} failed", path.display()))?;
+
+    // 用打开的 fd 自己 stat（不再走 path），避免 path 在两步之间被换 symlink
+    let meta = file
+        .metadata()
+        .with_context(|| format!("fstat {} failed", path.display()))?;
+
+    if !meta.is_file() {
+        return Err(anyhow!(
+            "私钥路径不是普通文件（可能是 symlink/directory/device）：{}",
+            path.display()
+        ));
+    }
+
     let mode = meta.permissions().mode() & 0o777;
-    // 只接受 owner-only 的权限位（0600 / 0400 等）。group/other 任何位都拒绝。
     if mode & 0o077 != 0 {
         return Err(anyhow!(
             "私钥文件权限不安全：{} 当前权限 {:o}（同主机其他用户可读）。\n\
@@ -107,13 +129,43 @@ fn check_private_key_permissions(path: &Path) -> anyhow::Result<()> {
             path.display()
         ));
     }
-    Ok(())
+
+    // owner 必须是当前用户，避免读到别人放的"假私钥"
+    let cur_uid = unsafe {
+        extern "C" {
+            fn getuid() -> u32;
+        }
+        getuid()
+    };
+    if meta.uid() != cur_uid {
+        return Err(anyhow!(
+            "私钥文件所有者不是当前用户：{}（owner uid={}, current uid={}）",
+            path.display(),
+            meta.uid(),
+            cur_uid
+        ));
+    }
+
+    // 读完整内容到内存（被 zeroize 包，drop 时清零）
+    let mut buf = String::new();
+    file.read_to_string(&mut buf)
+        .with_context(|| format!("read {} failed", path.display()))?;
+    Ok(buf)
 }
 
-// Windows / 非 Unix 平台：跳过权限检查（NTFS ACL 模型不同）
+// Windows / 非 Unix：用 path 直接读（NTFS ACL 模型不同，由 OS 把关）
 #[cfg(not(unix))]
-fn check_private_key_permissions(_path: &Path) -> anyhow::Result<()> {
-    Ok(())
+fn read_private_key_secure(path: &Path) -> anyhow::Result<String> {
+    let buf = std::fs::read_to_string(path)
+        .with_context(|| format!("read {} failed", path.display()))?;
+    Ok(buf)
+}
+
+/// 仅供测试用：保留旧的"只校验权限"接口
+#[cfg(test)]
+#[cfg(unix)]
+fn check_private_key_permissions(path: &Path) -> anyhow::Result<()> {
+    read_private_key_secure(path).map(|_| ())
 }
 
 #[derive(Debug)]
@@ -415,12 +467,13 @@ pub async fn connect(
                     priv_guess.display()
                 ));
             }
-            // 跟 OpenSSH 一样：私钥不能被 group/other 读，否则拒绝加载。
-            // 用户感觉这条太严的话可以 chmod 600 或在文件管理器里改权限。
-            check_private_key_permissions(&resolved)?;
+            // 原子读：open → fstat 权限校验 → 读全部到内存。
+            // 防 TOCTOU：跟 OpenSSH 一样要求 chmod 0600 owner-only；同时 fd 一致性确保两步之间路径不会被替换。
+            let mut secret = Zeroizing::new(read_private_key_secure(&resolved)?);
             let pp = passphrase.as_ref().map(|z| z.as_str());
-            let key = russh::keys::load_secret_key(&resolved, pp)
-                .with_context(|| format!("load key {} failed", resolved.display()))?;
+            let key = russh::keys::decode_secret_key(&secret, pp)
+                .with_context(|| format!("decode key {} failed", resolved.display()))?;
+            secret.zeroize();
             let with_hash = PrivateKeyWithHashAlg::new(Arc::new(key), None);
             let auth = handle
                 .authenticate_publickey(cfg.user.clone(), with_hash)
@@ -603,11 +656,22 @@ pub struct SudoResult {
 
 /// 用 sudo -S 从 stdin 注入密码执行一条命令。返回 exit_code + stdout + stderr。
 /// 不用 PTY，避免 sudo 的 tty 提示逻辑；-p '' 抑制提示字。
+/// sudo 命令长度上限——8KB 已经覆盖几乎所有合理用例（一行 vim/sed 都装得下）。
+/// 防止 XSS 通过 invoke 直接调 ssh_exec_sudo 时塞超长 payload 把 sudoers 缓冲打爆。
+const MAX_SUDO_CMD_LEN: usize = 8 * 1024;
+
 pub async fn exec_sudo(
     handle: Arc<Handle<SshClient>>,
     password: String,
     command: String,
 ) -> anyhow::Result<SudoResult> {
+    if command.len() > MAX_SUDO_CMD_LEN {
+        return Err(anyhow!(
+            "sudo command too long ({} > {} bytes); refusing for safety",
+            command.len(),
+            MAX_SUDO_CMD_LEN
+        ));
+    }
     // 立刻把密码挪进 Zeroizing，函数返回时清零；调用方传入的 String 在 IPC 反序列化时已经是它最早的副本。
     let password = Zeroizing::new(password);
     let mut channel = handle

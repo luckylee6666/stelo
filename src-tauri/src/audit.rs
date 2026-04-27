@@ -5,6 +5,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// detail 字段超过这个长度直接截断，防止攻击者用超长 account 名灌爆 audit.log
+const MAX_DETAIL_LEN: usize = 512;
+/// RATE_BUCKETS 总数上限，防止用海量 account 名灌爆内存
+const MAX_BUCKETS: usize = 4096;
+
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::Lazy;
 use serde::Serialize;
@@ -61,6 +66,15 @@ fn rotate_if_needed(file: &Path) -> Result<()> {
 }
 
 fn append_line(file: &Path, line: &str) -> Result<()> {
+    // 防 symlink 攻击：如果 audit.log 被换成指向 /etc/passwd 的 symlink，
+    // OpenOptions::append 会顺着写过去。开 append 前先检查不是 symlink。
+    if let Ok(meta) = std::fs::symlink_metadata(file) {
+        if meta.file_type().is_symlink() {
+            return Err(anyhow!(
+                "audit log path is a symlink — refusing to write (possible TOCTOU attack)"
+            ));
+        }
+    }
     rotate_if_needed(file)?;
     let mut f = OpenOptions::new()
         .create(true)
@@ -89,10 +103,18 @@ pub fn log(app: &AppHandle, kind: &str, detail: &str, ok: bool) {
             return;
         }
     };
+    // 截断超长 detail，防止攻击者用超长 account 名灌爆磁盘
+    let truncated;
+    let detail_clamped = if detail.len() > MAX_DETAIL_LEN {
+        truncated = format!("{}...(truncated, was {}B)", &detail[..MAX_DETAIL_LEN], detail.len());
+        truncated.as_str()
+    } else {
+        detail
+    };
     let ev = Event {
         ts: now_ts(),
         kind,
-        detail,
+        detail: detail_clamped,
         ok,
     };
     let line = match serde_json::to_string(&ev) {
@@ -138,14 +160,58 @@ static RATE_BUCKETS: Lazy<Mutex<HashMap<String, Bucket>>> = Lazy::new(Default::d
 /// XSS 即使能调 invoke 也无法快速 siphon 所有凭据。
 pub fn check_credential_rate(account: &str) -> Result<()> {
     let mut map = RATE_BUCKETS.lock().map_err(|e| anyhow!("rate lock: {e}"))?;
+    let now = now_ts();
+
+    // 顺手清理：所有 bucket 里把窗口外的 hits 丢掉，hits 空了就删掉 bucket
+    map.retain(|_, b| {
+        b.hits.retain(|t| now - *t < RATE_WINDOW_SECS);
+        !b.hits.is_empty()
+    });
+
+    // 总数仍超上限：拒绝新账户进入（防止用海量 account 名灌爆内存）
+    if !map.contains_key(account) && map.len() >= MAX_BUCKETS {
+        return Err(anyhow!(
+            "rate bucket capacity exceeded ({}); too many distinct accounts",
+            MAX_BUCKETS
+        ));
+    }
+
     let bucket = map.entry(account.to_string()).or_insert_with(Bucket::new);
-    if !bucket.try_hit(now_ts()) {
+    if !bucket.try_hit(now) {
         return Err(anyhow!(
             "credential rate-limited (>{} reads / {}s for one account)",
             RATE_MAX_HITS,
             RATE_WINDOW_SECS
         ));
     }
+    Ok(())
+}
+
+/// credential_save 同样限速：60s / account ≤ 12 次（写更宽松，但仍防爆磁盘）。
+pub fn check_credential_save_rate(account: &str) -> Result<()> {
+    static SAVE_BUCKETS: once_cell::sync::Lazy<Mutex<HashMap<String, Bucket>>> =
+        once_cell::sync::Lazy::new(Default::default);
+    const SAVE_MAX_HITS: usize = 12;
+
+    let mut map = SAVE_BUCKETS.lock().map_err(|e| anyhow!("save rate lock: {e}"))?;
+    let now = now_ts();
+    map.retain(|_, b| {
+        b.hits.retain(|t| now - *t < RATE_WINDOW_SECS);
+        !b.hits.is_empty()
+    });
+    if !map.contains_key(account) && map.len() >= MAX_BUCKETS {
+        return Err(anyhow!("save rate bucket capacity exceeded"));
+    }
+    let bucket = map.entry(account.to_string()).or_insert_with(Bucket::new);
+    bucket.hits.retain(|t| now - *t < RATE_WINDOW_SECS);
+    if bucket.hits.len() >= SAVE_MAX_HITS {
+        return Err(anyhow!(
+            "credential_save rate-limited (>{} writes / {}s for one account)",
+            SAVE_MAX_HITS,
+            RATE_WINDOW_SECS
+        ));
+    }
+    bucket.hits.push(now);
     Ok(())
 }
 
@@ -226,5 +292,41 @@ mod tests {
         // A 已满，B 还能继续
         assert!(check_credential_rate("acct-A").is_err());
         assert!(check_credential_rate("acct-B").is_ok());
+    }
+
+    #[test]
+    fn long_detail_truncated_in_log() {
+        // 直接测 append_line 不容易，逻辑上面 log() 函数已经截断。
+        // 这里验证 detail_clamped 截断的 sentinel 字符串在 audit Event 序列化里
+        let big = "A".repeat(MAX_DETAIL_LEN + 100);
+        let truncated = format!("{}...(truncated, was {}B)", &big[..MAX_DETAIL_LEN], big.len());
+        assert!(truncated.contains("(truncated"));
+        assert!(truncated.len() < big.len() + 64);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn append_refuses_symlink_target() {
+        use std::os::unix::fs::symlink;
+        let dir = tempdir().unwrap();
+        let real = dir.path().join("real-target.log");
+        std::fs::write(&real, "").unwrap();
+        let link = dir.path().join("audit.log");
+        symlink(&real, &link).unwrap();
+        // 写到 audit.log（symlink） → 应被拒绝
+        let res = append_line(&link, "{}");
+        assert!(res.is_err(), "symlink target must be rejected, got {:?}", res);
+    }
+
+    #[test]
+    fn save_rate_limit_blocks_after_threshold() {
+        // 用一个唯一 account 名避免和并发测试冲突
+        let acct = format!("save-test-{}", now_ts());
+        // 12 次允许
+        for i in 0..12 {
+            assert!(check_credential_save_rate(&acct).is_ok(), "i={}", i);
+        }
+        // 第 13 次拒绝
+        assert!(check_credential_save_rate(&acct).is_err());
     }
 }

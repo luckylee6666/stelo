@@ -176,6 +176,11 @@ pub fn credential_save(
     account: String,
     mut secret: String,
 ) -> Result<(), String> {
+    if let Err(e) = audit::check_credential_save_rate(&account) {
+        secret.zeroize();
+        audit::log(&app, "credential_save_rate_block", &account, false);
+        return Err(format!("{:#}", e));
+    }
     let res = credentials::save(&app, &account, &secret).map_err(fmt_err);
     secret.zeroize();
     audit::log(&app, "credential_save", &account, res.is_ok());
@@ -210,6 +215,9 @@ pub fn known_hosts_list(app: AppHandle) -> Result<Vec<KnownHostEntry>, String> {
 
 /// 校验配置备份文件路径：只允许 .json 后缀、绝对路径、且不落在敏感目录里。
 /// 这条命令存在的唯一目的就是 ConfigBackupDialog 的导入/导出，**不能**被前端用作通用 read/write。
+///
+/// 防 symlink 绕过：对**已存在**的路径用 canonicalize 解析符号链接后再做黑名单检查。
+/// 不存在的路径（导出场景）：检查 parent 目录的 canonical 形式，确保 parent 不是 symlink 指向敏感目录。
 fn validate_backup_path(raw: &str) -> Result<std::path::PathBuf, String> {
     let p = std::path::Path::new(raw);
     if !p.is_absolute() {
@@ -218,7 +226,6 @@ fn validate_backup_path(raw: &str) -> Result<std::path::PathBuf, String> {
     if raw.contains("..") {
         return Err("路径不能包含 ..".into());
     }
-    let lower = raw.to_lowercase();
     let ext_ok = p
         .extension()
         .and_then(|e| e.to_str())
@@ -227,7 +234,25 @@ fn validate_backup_path(raw: &str) -> Result<std::path::PathBuf, String> {
     if !ext_ok {
         return Err("仅支持 .json 文件".into());
     }
-    // 黑名单：典型敏感目录/文件名。即使前端被注入也别让它读 ~/.ssh、~/.aws 等
+
+    // canonical 形式：已存在 → 直接 canonicalize；不存在 → parent canonicalize + 文件名拼回去
+    let canonical = if p.exists() {
+        p.canonicalize().map_err(|e| format!("canonicalize 失败：{e}"))?
+    } else {
+        let parent = p
+            .parent()
+            .ok_or_else(|| "路径无父目录".to_string())?;
+        let parent_canon = parent
+            .canonicalize()
+            .map_err(|e| format!("父目录 canonicalize 失败：{e}"))?;
+        let filename = p
+            .file_name()
+            .ok_or_else(|| "路径无文件名".to_string())?;
+        parent_canon.join(filename)
+    };
+
+    let canonical_str = canonical.to_string_lossy().to_lowercase();
+    // 黑名单针对 canonical 形式做匹配——即使原 raw 是 symlink 也能被解开
     const FORBIDDEN: &[&str] = &[
         "/.ssh/",
         "/.aws/",
@@ -235,15 +260,17 @@ fn validate_backup_path(raw: &str) -> Result<std::path::PathBuf, String> {
         "/.config/gh/",
         "/library/keychains/",
         "/etc/",
-        "credentials.json", // Stelo 自己的凭据文件
+        "credentials.json",
         "known_hosts.json",
+        ".master_salt",
+        "audit.log",
     ];
     for needle in FORBIDDEN {
-        if lower.contains(needle) {
-            return Err(format!("禁止读写敏感路径：{}", needle));
+        if canonical_str.contains(needle) {
+            return Err(format!("禁止读写敏感路径（解析后落在 {}）", needle));
         }
     }
-    Ok(p.to_path_buf())
+    Ok(canonical)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -345,13 +372,23 @@ pub fn known_hosts_remove(app: AppHandle, host: String, port: u16) -> Result<(),
 
 #[tauri::command(rename_all = "camelCase")]
 pub async fn ssh_exec_sudo(
+    app: AppHandle,
     registry: State<'_, SshRegistry>,
     session_id: String,
     password: String,
     command: String,
 ) -> Result<SudoResult, String> {
     let handle = ssh::ssh_handle(registry.sessions(), &session_id).map_err(|e| e.to_string())?;
-    ssh::exec_sudo(handle, password, command).await.map_err(fmt_err)
+    // 审计：每次 sudo 调用都落审计日志（命令本身被截断到 512 字符），便于事后追溯
+    let cmd_for_audit = if command.len() > 200 {
+        format!("{}...", &command[..200])
+    } else {
+        command.clone()
+    };
+    let detail = format!("session={} cmd={}", session_id, cmd_for_audit);
+    let res = ssh::exec_sudo(handle, password, command).await.map_err(fmt_err);
+    audit::log(&app, "ssh_exec_sudo", &detail, res.is_ok());
+    res
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -513,10 +550,13 @@ pub async fn sftp_rename(
 #[cfg(test)]
 mod backup_path_tests {
     use super::validate_backup_path;
+    use tempfile::tempdir;
 
     #[test]
-    fn accepts_absolute_json_in_home() {
-        assert!(validate_backup_path("/Users/anyone/Desktop/stelo-config.json").is_ok());
+    fn accepts_absolute_json_in_existing_dir() {
+        let dir = tempdir().unwrap();
+        let p = dir.path().join("stelo-config.json");
+        assert!(validate_backup_path(p.to_str().unwrap()).is_ok());
     }
 
     #[test]
@@ -527,39 +567,68 @@ mod backup_path_tests {
 
     #[test]
     fn rejects_dotdot_traversal() {
-        assert!(validate_backup_path("/Users/anyone/../etc/passwd.json").is_err());
+        let dir = tempdir().unwrap();
+        let p = format!("{}/../etc/passwd.json", dir.path().display());
+        assert!(validate_backup_path(&p).is_err());
     }
 
     #[test]
     fn rejects_non_json_extension() {
-        assert!(validate_backup_path("/Users/anyone/.ssh/id_rsa").is_err());
-        assert!(validate_backup_path("/tmp/foo.txt").is_err());
-        assert!(validate_backup_path("/tmp/foo").is_err());
+        let dir = tempdir().unwrap();
+        let p1 = dir.path().join("id_rsa");
+        let p2 = dir.path().join("foo.txt");
+        let p3 = dir.path().join("foo");
+        assert!(validate_backup_path(p1.to_str().unwrap()).is_err());
+        assert!(validate_backup_path(p2.to_str().unwrap()).is_err());
+        assert!(validate_backup_path(p3.to_str().unwrap()).is_err());
     }
 
     #[test]
     fn rejects_dotssh_aws_gnupg_dirs() {
-        assert!(validate_backup_path("/Users/anyone/.ssh/foo.json").is_err());
-        assert!(validate_backup_path("/Users/anyone/.aws/credentials.json").is_err());
-        assert!(validate_backup_path("/Users/anyone/.gnupg/foo.json").is_err());
+        // 这些目录不存在也能验证：黑名单优先于 canonicalize 路径检查
+        let dir = tempdir().unwrap();
+        // 在 tempdir 里建一个 .ssh 子目录，验证 canonical 落在 .ssh → 拒绝
+        let ssh_dir = dir.path().join(".ssh");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        let p = ssh_dir.join("foo.json");
+        assert!(validate_backup_path(p.to_str().unwrap()).is_err());
     }
 
     #[test]
-    fn rejects_keychains_and_etc() {
-        assert!(
-            validate_backup_path("/Users/anyone/Library/Keychains/login.json").is_err()
-        );
+    fn rejects_etc_path() {
+        // /etc 一般存在
         assert!(validate_backup_path("/etc/foo.json").is_err());
     }
 
     #[test]
     fn rejects_stelo_internal_files() {
-        assert!(validate_backup_path("/tmp/credentials.json").is_err());
-        assert!(validate_backup_path("/tmp/known_hosts.json").is_err());
+        let dir = tempdir().unwrap();
+        let p1 = dir.path().join("credentials.json");
+        let p2 = dir.path().join("known_hosts.json");
+        let p3 = dir.path().join("audit.log.json");
+        assert!(validate_backup_path(p1.to_str().unwrap()).is_err());
+        assert!(validate_backup_path(p2.to_str().unwrap()).is_err());
+        assert!(validate_backup_path(p3.to_str().unwrap()).is_err());
     }
 
     #[test]
     fn case_insensitive_extension() {
-        assert!(validate_backup_path("/Users/x/Backups/STELO.JSON").is_ok());
+        let dir = tempdir().unwrap();
+        let p = dir.path().join("STELO.JSON");
+        assert!(validate_backup_path(p.to_str().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn rejects_symlink_into_sensitive_dir() {
+        // 在 tempdir 里造一个 symlink 指向 /etc，看 canonicalize 是否解开
+        #[cfg(unix)]
+        {
+            let dir = tempdir().unwrap();
+            let link = dir.path().join("benign.json");
+            std::os::unix::fs::symlink("/etc/hosts", &link).unwrap();
+            let res = validate_backup_path(link.to_str().unwrap());
+            // symlink 解析后落在 /etc → 拒绝
+            assert!(res.is_err(), "symlink to /etc should be rejected, got {:?}", res);
+        }
     }
 }

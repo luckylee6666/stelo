@@ -6,10 +6,14 @@ use russh::client::Handle;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use crate::ssh::SshClient;
+
+/// 单条转发规则的并发连接上限。防止同进程被海量 TCP 连接挂满 task。
+const MAX_CONCURRENT_FORWARD_CONNS: usize = 256;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ForwardRule {
@@ -100,6 +104,9 @@ pub async fn start(
     let rhost = remote_host.clone();
     let rid_for_err = rule_id.clone();
 
+    // 每条规则一个并发上限：超过 MAX_CONCURRENT_FORWARD_CONNS 个活跃连接时新连接挂起等待
+    let conn_limit = Arc::new(Semaphore::new(MAX_CONCURRENT_FORWARD_CONNS));
+
     let task = tokio::spawn(async move {
         let event = format!("forward:status:{}", session_for_task);
         loop {
@@ -112,7 +119,21 @@ pub async fn start(
             };
             let handle = ssh_handle.clone();
             let rhost_c = rhost.clone();
+            let limit = conn_limit.clone();
+            // 拿不到 permit 立即丢弃这条 socket，比无限堆 task 安全
+            let permit = match limit.try_acquire_owned() {
+                Ok(p) => p,
+                Err(_) => {
+                    warn!(
+                        "forward connection cap reached ({} active); dropping new conn from {}",
+                        MAX_CONCURRENT_FORWARD_CONNS, peer
+                    );
+                    drop(socket);
+                    continue;
+                }
+            };
             tokio::spawn(async move {
+                let _permit = permit; // 在 task 结束时自动释放
                 let channel = match handle
                     .channel_open_direct_tcpip(
                         rhost_c,
