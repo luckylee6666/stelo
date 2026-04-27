@@ -15,11 +15,15 @@ use crate::ssh::{self, SshConnectConfig, SshRegistry, SudoResult};
 /// russh-sftp 的 `Error::Status` Display 会同时打出 status 和 message，二者字面相同时
 /// 单段就成了 `"Permission denied: Permission denied"`；再叠加 source 层的同名重复，
 /// 默认 `{e:#}` 会打成 `... failed: Permission denied: Permission denied: Permission denied`。
+///
+/// 同时做基本的路径脱敏：
+/// - `/Users/<name>/...` → `~/...`（macOS）
+/// - `/home/<name>/...` → `~/...`（Linux）
+/// 防止错误消息把本机用户名 / 真实路径回显到 UI / 截图 / 错误上报。
 fn fmt_err(err: anyhow::Error) -> String {
     let mut parts: Vec<String> = Vec::new();
     for cause in err.chain() {
         let raw = cause.to_string();
-        // 先折叠单段内的 "X: X" 自我重复
         let s = match raw.split_once(": ") {
             Some((a, b)) if a == b => a.to_string(),
             _ => raw,
@@ -27,13 +31,44 @@ fn fmt_err(err: anyhow::Error) -> String {
         if parts.last().map(|p| p == &s).unwrap_or(false) {
             continue;
         }
-        // 下游完全包含时也跳过（避免 "foo: bar" 后又接 "bar"）
         if parts.last().map(|p| p.contains(&s)).unwrap_or(false) {
             continue;
         }
         parts.push(s);
     }
-    parts.join(": ")
+    redact_paths(&parts.join(": "))
+}
+
+fn redact_paths(s: &str) -> String {
+    // 简单字面替换；不引入 regex 依赖。
+    // /Users/<single segment>/ → ~/
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    let bytes = s.as_bytes();
+    while i < bytes.len() {
+        // 检测 /Users/ 或 /home/ 起点
+        let prefix_len = if s[i..].starts_with("/Users/") {
+            7
+        } else if s[i..].starts_with("/home/") {
+            6
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+            continue;
+        };
+        // 跳过用户名（直到下一个 / 或非路径字符）
+        let mut j = i + prefix_len;
+        while j < bytes.len() {
+            let c = bytes[j];
+            if c == b'/' || c == b' ' || c == b'\n' || c == b'\t' || c == b'"' || c == b'\'' {
+                break;
+            }
+            j += 1;
+        }
+        out.push('~');
+        i = j;
+    }
+    out
 }
 
 #[tauri::command]
@@ -616,6 +651,36 @@ mod backup_path_tests {
         let dir = tempdir().unwrap();
         let p = dir.path().join("STELO.JSON");
         assert!(validate_backup_path(p.to_str().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn redact_paths_macos() {
+        use super::redact_paths;
+        assert_eq!(
+            redact_paths("read /Users/alice/.ssh/id_rsa failed"),
+            "read ~/.ssh/id_rsa failed"
+        );
+        assert_eq!(
+            redact_paths("/Users/bob/Library/foo.json"),
+            "~/Library/foo.json"
+        );
+    }
+
+    #[test]
+    fn redact_paths_linux() {
+        use super::redact_paths;
+        assert_eq!(
+            redact_paths("read /home/charlie/.config/x.json failed"),
+            "read ~/.config/x.json failed"
+        );
+    }
+
+    #[test]
+    fn redact_paths_preserves_other_paths() {
+        use super::redact_paths;
+        assert_eq!(redact_paths("/etc/passwd"), "/etc/passwd");
+        assert_eq!(redact_paths("/tmp/foo"), "/tmp/foo");
+        assert_eq!(redact_paths("plain message"), "plain message");
     }
 
     #[test]

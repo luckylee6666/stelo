@@ -79,6 +79,15 @@ pub async fn start(
         .remote_port
         .ok_or_else(|| anyhow!("remote_port required for local forward"))?;
 
+    // 硬性拒绝 0.0.0.0 / :: / 空——这些会监听所有网卡，把内网服务暴露给局域网。
+    // SSH 端口转发在专业工具里默认绑 127.0.0.1，前端有警告但仍兜底拦截一次。
+    let host_trimmed = rule.local_host.trim();
+    if matches!(host_trimmed, "0.0.0.0" | "::" | "*" | "") {
+        return Err(anyhow!(
+            "拒绝绑定通配地址 '{}'：这会让局域网内任意主机访问此端口（数据库等内网服务会被暴露）。请改用 127.0.0.1。",
+            host_trimmed
+        ));
+    }
     let addr = format!("{}:{}", rule.local_host, rule.local_port);
     let listener = TcpListener::bind(&addr)
         .await

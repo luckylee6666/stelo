@@ -114,17 +114,31 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
     fit.fit();
 
     // OSC 7: file://host/path → 同步 cwd
+    // 安全：拒绝包含 .. 或控制字符的路径，防恶意服务器伪造 cwd 误导后续 SFTP 操作
     term.parser.registerOscHandler(7, (data) => {
       const m = data.match(/^file:\/\/[^/]*(\/.*)$/);
       if (m) {
+        const raw = m[1];
         try {
-          useSessionStore.getState().setCwd(sessionId, decodeURIComponent(m[1]));
+          const decoded = decodeURIComponent(raw);
+          if (decoded.includes("..") || /[\x00-\x1f]/.test(decoded)) {
+            return true; // 静默丢弃可疑路径
+          }
+          useSessionStore.getState().setCwd(sessionId, decoded);
         } catch {
-          useSessionStore.getState().setCwd(sessionId, m[1]);
+          if (!raw.includes("..")) {
+            useSessionStore.getState().setCwd(sessionId, raw);
+          }
         }
       }
       return true;
     });
+
+    // OSC 52（剪贴板写入）/ OSC 51（输入伪造）：远端 SSH server 不应主动写用户剪贴板，
+    // 这会被恶意服务器用来污染剪贴板（粘贴攻击）。整个吞掉。
+    // 注册 handler 返回 true 表示"已处理"，xterm 不再做默认动作。
+    term.parser.registerOscHandler(52, () => true);
+    term.parser.registerOscHandler(51, () => true);
 
     const unlisten: UnlistenFn[] = [];
     let disposed = false;

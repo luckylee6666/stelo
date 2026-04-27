@@ -2,7 +2,29 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import * as XLSX from "xlsx";
 import mammoth from "mammoth";
+import DOMPurify from "dompurify";
 import { FileSpreadsheet, FileText, X } from "lucide-react";
+
+// 远端 Office 文件经 mammoth/xlsx 转出 HTML 后**必须**经 DOMPurify 清理。
+// 恶意 .docx / .xlsx 可在 HTML 中嵌入 <script>/<img onerror=...>/<svg onload=...>，
+// 配合 isolation 之外的剩余攻击面（如 invoke）做横向移动。
+function sanitizeOfficeHtml(html: string): string {
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: [
+      "table", "thead", "tbody", "tr", "td", "th",
+      "p", "br", "div", "span", "pre", "code",
+      "h1", "h2", "h3", "h4", "h5", "h6",
+      "ul", "ol", "li",
+      "b", "strong", "i", "em", "u", "s", "sup", "sub",
+      "a", "img", "hr",
+    ],
+    ALLOWED_ATTR: ["class", "style", "colspan", "rowspan", "href", "src", "alt", "title"],
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|data:image\/(?:png|jpe?g|gif|webp|svg\+xml));?)/i,
+    FORBID_TAGS: ["script", "iframe", "object", "embed", "form", "input", "button", "meta", "link", "base"],
+    FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus", "formaction"],
+    KEEP_CONTENT: true,
+  }) as unknown as string;
+}
 
 type Props = {
   backendId: string;
@@ -155,14 +177,14 @@ export function OfficePreview({ backendId, remotePath, onClose }: Props) {
         {!loading && !error && sheets && sheets[activeSheet] && (
           <div
             className="office-preview overflow-auto p-4"
-            dangerouslySetInnerHTML={{ __html: sheets[activeSheet].html }}
+            dangerouslySetInnerHTML={{ __html: sanitizeOfficeHtml(sheets[activeSheet].html) }}
           />
         )}
         {!loading && !error && wordHtml !== null && (
           <div
             className="office-preview mx-auto max-w-4xl p-8 leading-relaxed"
             style={{ fontFamily: '"PingFang SC", system-ui, sans-serif' }}
-            dangerouslySetInnerHTML={{ __html: wordHtml }}
+            dangerouslySetInnerHTML={{ __html: sanitizeOfficeHtml(wordHtml) }}
           />
         )}
       </div>

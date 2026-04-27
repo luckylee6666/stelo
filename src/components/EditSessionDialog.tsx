@@ -422,8 +422,20 @@ function ForwardRow({
         本地 {pf.localHost}:{pf.localPort || "?"} 的连接会通过 SSH 转到远端{" "}
         {pf.remoteHost || "?"}:{pf.remotePort || "?"}
       </div>
+      {isWildcardHost(pf.localHost) && (
+        <div className="mt-1 rounded border border-amber-700/60 bg-amber-950/30 px-2 py-1 text-[11px] text-amber-200">
+          ⚠️ 监听地址 {pf.localHost} 会让局域网内任意主机可访问该端口（数据库 / 内网服务等会被暴露）。
+          建议改成 <code className="font-mono">127.0.0.1</code>，仅本机访问。
+        </div>
+      )}
     </div>
   );
+}
+
+/** 0.0.0.0 / :: / 任何接口名"::" → 整网卡监听，安全风险高 */
+function isWildcardHost(h: string): boolean {
+  const s = (h || "").trim();
+  return s === "0.0.0.0" || s === "::" || s === "*" || s === "";
 }
 
 function TabBtn({
