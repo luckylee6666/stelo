@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useSnippetStore, type Snippet } from "../stores/snippets";
 import { sendSnippetToActive } from "../lib/snippets";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { useDialogEscape } from "../lib/useDialogEscape";
 
 type Props = {
   onClose: () => void;
@@ -22,6 +23,8 @@ export function SnippetManagerDialog({ onClose }: Props) {
   const [editing, setEditing] = useState<Snippet | null | "new">(null);
   const [pendingDelete, setPendingDelete] = useState<Snippet | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  useDialogEscape(onClose, !editing && !pendingDelete);
 
   const runSnippet = async (cmd: string, id: string) => {
     const r = await sendSnippetToActive(cmd, id);

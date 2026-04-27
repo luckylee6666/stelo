@@ -161,18 +161,20 @@ button:not([data-no-transition]) {
     color 150ms ease, box-shadow 150ms ease;
 }
 
-/* 焦点环统一基线：避免裸默认浏览器蓝 */
+/* 焦点环统一基线：键盘焦点 :focus-visible（无论点 / Tab 都触发） */
 button:focus-visible,
 a:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
   border-radius: 4px;
 }
-input:focus-visible,
-textarea:focus-visible,
-select:focus-visible {
+/* 所有原生输入控件，无论点击还是 Tab 焦点都给一致的 2px 蓝环 + 边框色 */
+input:focus,
+textarea:focus,
+select:focus {
   outline: none;
-  box-shadow: 0 0 0 2px var(--accent);
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 /* 主题切换过渡：暗/亮模式切换时整体 fade 一下，不刺眼 */

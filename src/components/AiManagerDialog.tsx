@@ -3,6 +3,7 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { formatUserError } from "../lib/redact";
+import { useDialogEscape } from "../lib/useDialogEscape";
 import {
   useAiStore,
   PRESETS,
@@ -28,6 +29,9 @@ export function AiManagerDialog({ onClose }: Props) {
 
   const [editing, setEditing] = useState<AiProvider | null | "new">(null);
   const [pendingDelete, setPendingDelete] = useState<AiProvider | null>(null);
+
+  // ESC 关闭整个对话框（编辑子表单 / 删除确认时由各自的 ConfirmDialog 接管）
+  useDialogEscape(onClose, !editing && !pendingDelete);
 
   return (
     <div

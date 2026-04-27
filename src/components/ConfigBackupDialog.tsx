@@ -6,6 +6,7 @@ import {
 } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { formatUserError } from "../lib/redact";
+import { useDialogEscape } from "../lib/useDialogEscape";
 import {
   Download,
   Upload,
@@ -41,6 +42,8 @@ function applyLocalStoragePrefs(prefs: LocalPrefs) {
 
 export function ConfigBackupDialog({ onClose }: Props) {
   const [busy, setBusy] = useState(false);
+
+  useDialogEscape(onClose, !busy);
 
   const doExport = async () => {
     if (busy) return;

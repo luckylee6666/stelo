@@ -10,6 +10,7 @@ import { useKeyStore } from "../stores/keys";
 import { GroupSelect } from "./GroupSelect";
 import { cn } from "../lib/utils";
 import { newForwardId } from "../lib/forwards";
+import { useDialogEscape } from "../lib/useDialogEscape";
 
 type Props = {
   session: Session;
@@ -19,6 +20,7 @@ type Props = {
 type KeySource = "manual" | "saved";
 
 export function EditSessionDialog({ session, onClose }: Props) {
+  useDialogEscape(onClose);
   const updateMeta = useSessionStore((s) => s.updateMeta);
   const savedKeys = useKeyStore((s) => s.keys);
 

@@ -6,6 +6,7 @@ import { useSessionStore } from "../stores/sessions";
 import { useKeyStore } from "../stores/keys";
 import { cn } from "../lib/utils";
 import { GroupSelect } from "./GroupSelect";
+import { useDialogEscape } from "../lib/useDialogEscape";
 
 type Props = {
   open: boolean;
@@ -23,6 +24,8 @@ export function NewSessionDialog({ open, onClose }: Props) {
   const addSshConnected = useSessionStore((s) => s.addSshConnected);
   const addLocal = useSessionStore((s) => s.addLocal);
   const savedKeys = useKeyStore((s) => s.keys);
+
+  useDialogEscape(onClose, open);
 
   const [host, setHost] = useState("");
   const [port, setPort] = useState("22");

@@ -4,6 +4,7 @@ import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { useKeyStore, type SshKey } from "../stores/keys";
 import { cn } from "../lib/utils";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { useDialogEscape } from "../lib/useDialogEscape";
 
 type Props = {
   onClose: () => void;
@@ -18,6 +19,8 @@ export function KeyManagerDialog({ onClose }: Props) {
   const [editing, setEditing] = useState<SshKey | null>(null);
   const [adding, setAdding] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<SshKey | null>(null);
+
+  useDialogEscape(onClose, !editing && !adding && !confirmDelete);
 
   return (
     <div
