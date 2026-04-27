@@ -86,6 +86,9 @@ export function AiPanel({ onClose, onOpenManager }: Props) {
   // 上次 ask 的最终 prompt，用于 529 等失败后"重试 / 换 Provider"按钮
   const lastAskRef = useRef<{ prompt: string; agent: boolean } | null>(null);
   const [errorRetryable, setErrorRetryable] = useState(false);
+  const [tokenUsage, setTokenUsage] = useState<{ input: number; output: number; turns: number }>(
+    { input: 0, output: 0, turns: 0 },
+  );
   const pickFiles = async () => {
     try {
       const picked = await openFileDialog({ multiple: true });
@@ -402,6 +405,16 @@ export function AiPanel({ onClose, onOpenManager }: Props) {
       }
       if (stopRequestedRef.current) break;
 
+      // 累计 token 用量（usage 只在 provider 返回时存在）
+      if (result.usage) {
+        const u = result.usage;
+        setTokenUsage((prev) => ({
+          input: prev.input + u.inputTokens,
+          output: prev.output + u.outputTokens,
+          turns: prev.turns + 1,
+        }));
+      }
+
       // 流结束后如果文字段空（模型只给了 tool_use），把占位改为"工具调用占位符"
       setTurns((t) => {
         if (t.length === 0 || t[t.length - 1].role !== "assistant") return t;
@@ -563,6 +576,7 @@ export function AiPanel({ onClose, onOpenManager }: Props) {
     setTurns([]);
     historyRef.current = [];
     setError(null);
+    setTokenUsage({ input: 0, output: 0, turns: 0 });
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -692,6 +706,20 @@ export function AiPanel({ onClose, onOpenManager }: Props) {
             <div className="my-2 flex items-center gap-2 text-xs text-neutral-500">
               <Loader2 size={12} className="animate-spin text-blue-400" />
               {progress ?? "思考中…"}
+            </div>
+          )}
+          {!loading && tokenUsage.turns > 0 && (
+            <div className="my-1 flex items-center gap-2 text-[10px] text-neutral-600">
+              <span>本会话累计</span>
+              <span className="rounded bg-neutral-800/60 px-1.5 py-0.5 font-mono">
+                in {tokenUsage.input.toLocaleString()}
+              </span>
+              <span className="rounded bg-neutral-800/60 px-1.5 py-0.5 font-mono">
+                out {tokenUsage.output.toLocaleString()}
+              </span>
+              <span className="rounded bg-neutral-800/60 px-1.5 py-0.5 font-mono">
+                {tokenUsage.turns} 轮
+              </span>
             </div>
           )}
           {error && (

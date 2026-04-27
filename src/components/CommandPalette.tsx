@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSnippetStore } from "../stores/snippets";
 import { useHistoryStore } from "../stores/history";
+import { useSessionStore } from "../stores/sessions";
 import { sendSnippetToActive } from "../lib/snippets";
 import { cn } from "../lib/utils";
 
@@ -23,7 +24,29 @@ type Row =
       command: string;
       count: number;
       lastAt: number;
+    }
+  | {
+      kind: "session";
+      id: string;
+      name: string;
+      target: string;
+      isActive: boolean;
+    }
+  | {
+      kind: "action";
+      id: string;
+      name: string;
+      desc: string;
+      run: () => void;
     };
+
+const ACTIONS: Array<{ id: string; name: string; desc: string; event: string }> = [
+  { id: "new-session", name: "新建会话", desc: "弹出新会话对话框", event: "hyper:new-session" },
+  { id: "open-ai", name: "打开 AI 助手", desc: "⌘J", event: "hyper:open-ai" },
+  { id: "open-ai-mgr", name: "AI 模型管理", desc: "管理 API key / Provider", event: "hyper:open-ai-mgr" },
+  { id: "open-shortcuts", name: "快捷键速查", desc: "⌘?", event: "hyper:open-shortcuts" },
+  { id: "terminal-find", name: "终端内搜索", desc: "⌘F", event: "hyper:terminal-find" },
+];
 
 export function CommandPalette({ open, onClose }: Props) {
   const snippets = useSnippetStore((s) => s.snippets);
@@ -43,7 +66,29 @@ export function CommandPalette({ open, onClose }: Props) {
     }
   }, [open]);
 
+  const sessions = useSessionStore((s) => s.sessions);
+  const activeId = useSessionStore((s) => s.activeId);
+  const setActive = useSessionStore((s) => s.setActive);
+
   const allRows = useMemo<Row[]>(() => {
+    // 会话排前面（最常用切换）
+    const sessionRows: Row[] = sessions.map((s) => ({
+      kind: "session",
+      id: s.id,
+      name: s.name,
+      target:
+        s.kind === "ssh"
+          ? `${s.user}@${s.host}${s.port && s.port !== 22 ? `:${s.port}` : ""}`
+          : "本地终端",
+      isActive: s.id === activeId,
+    }));
+    const actionRows: Row[] = ACTIONS.map((a) => ({
+      kind: "action",
+      id: a.id,
+      name: a.name,
+      desc: a.desc,
+      run: () => window.dispatchEvent(new CustomEvent(a.event)),
+    }));
     const snippetCmds = new Set(snippets.map((s) => s.command));
     const snippetRows: Row[] = snippets
       .slice()
@@ -71,17 +116,18 @@ export function CommandPalette({ open, onClose }: Props) {
         count: h.count,
         lastAt: h.lastAt,
       }));
-    return [...snippetRows, ...historyRows];
-  }, [snippets, history]);
+    return [...sessionRows, ...actionRows, ...snippetRows, ...historyRows];
+  }, [sessions, activeId, snippets, history]);
 
   const results = useMemo<Row[]>(() => {
     const q = query.trim().toLowerCase();
     if (!q) return allRows;
     return allRows.filter((r) => {
-      const hay =
-        r.kind === "snippet"
-          ? `${r.name} ${r.command}`
-          : r.command;
+      let hay = "";
+      if (r.kind === "snippet") hay = `${r.name} ${r.command}`;
+      else if (r.kind === "history") hay = r.command;
+      else if (r.kind === "session") hay = `${r.name} ${r.target}`;
+      else if (r.kind === "action") hay = `${r.name} ${r.desc}`;
       return hay.toLowerCase().includes(q);
     });
   }, [allRows, query]);
@@ -93,6 +139,16 @@ export function CommandPalette({ open, onClose }: Props) {
   if (!open) return null;
 
   const run = async (row: Row) => {
+    if (row.kind === "session") {
+      setActive(row.id);
+      onClose();
+      return;
+    }
+    if (row.kind === "action") {
+      row.run();
+      onClose();
+      return;
+    }
     const r = await sendSnippetToActive(
       row.command,
       row.kind === "snippet" ? row.id : undefined,
@@ -146,7 +202,7 @@ export function CommandPalette({ open, onClose }: Props) {
             setIndex(0);
           }}
           onKeyDown={onKeyDown}
-          placeholder="搜索快捷指令 / 命令历史（↵ 发送，Esc 关闭，Shift+⌫ 从历史删除）"
+          placeholder="搜索会话 / 动作 / 快捷指令 / 命令历史（↵ 执行，Esc 关闭，Shift+⌫ 从历史删除）"
           className="h-11 border-b border-neutral-800 bg-transparent px-4 text-sm text-neutral-100 outline-none placeholder:text-neutral-500"
         />
         <div className="max-h-[55vh] overflow-auto py-1">
@@ -157,43 +213,79 @@ export function CommandPalette({ open, onClose }: Props) {
                 : "无匹配结果"}
             </div>
           )}
-          {results.map((r, i) => (
-            <button
-              key={r.kind === "snippet" ? `s-${r.id}` : `h-${r.command}`}
-              onMouseEnter={() => setIndex(i)}
-              onClick={() => run(r)}
-              className={cn(
-                "flex w-full items-center gap-3 px-4 py-2 text-left text-sm",
-                i === index
-                  ? "bg-neutral-800 text-neutral-100"
-                  : "text-neutral-300 hover:bg-neutral-800/60",
-              )}
-            >
-              <span className="shrink-0 text-base">
-                {r.kind === "snippet" ? "⚡" : "⏱"}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="truncate">
-                  {r.kind === "snippet" ? r.name : r.command}
-                </div>
-                <div className="truncate font-mono text-xs text-neutral-500">
-                  {r.kind === "snippet" ? r.command : "历史记录"}
-                </div>
-              </div>
-              <span className="shrink-0 text-[11px] text-neutral-500">
-                {r.kind === "snippet"
-                  ? r.useCount > 0
-                    ? `用过 ${r.useCount} 次`
-                    : "未用过"
-                  : `${r.count} 次`}
-              </span>
-              {i === index && (
-                <span className="shrink-0 text-[11px] text-neutral-500">
-                  ↵
+          {results.map((r, i) => {
+            const key =
+              r.kind === "snippet"
+                ? `s-${r.id}`
+                : r.kind === "history"
+                  ? `h-${r.command}`
+                  : r.kind === "session"
+                    ? `t-${r.id}`
+                    : `a-${r.id}`;
+            const icon =
+              r.kind === "session"
+                ? r.isActive ? "●" : "○"
+                : r.kind === "action"
+                  ? "▶"
+                  : r.kind === "snippet"
+                    ? "⚡"
+                    : "⏱";
+            const primary =
+              r.kind === "session"
+                ? r.name
+                : r.kind === "action"
+                  ? r.name
+                  : r.kind === "snippet"
+                    ? r.name
+                    : r.command;
+            const secondary =
+              r.kind === "session"
+                ? r.target
+                : r.kind === "action"
+                  ? r.desc
+                  : r.kind === "snippet"
+                    ? r.command
+                    : "历史记录";
+            const meta =
+              r.kind === "session"
+                ? r.isActive ? "当前" : "切到此 tab"
+                : r.kind === "action"
+                  ? "动作"
+                  : r.kind === "snippet"
+                    ? r.useCount > 0 ? `用过 ${r.useCount} 次` : "未用过"
+                    : `${r.count} 次`;
+            return (
+              <button
+                key={key}
+                onMouseEnter={() => setIndex(i)}
+                onClick={() => run(r)}
+                className={cn(
+                  "flex w-full items-center gap-3 px-4 py-2 text-left text-sm",
+                  i === index
+                    ? "bg-neutral-800 text-neutral-100"
+                    : "text-neutral-300 hover:bg-neutral-800/60",
+                )}
+              >
+                <span className={cn(
+                  "shrink-0 text-base",
+                  r.kind === "session" && r.isActive ? "text-emerald-400" : "",
+                  r.kind === "action" ? "text-blue-400" : "",
+                )}>
+                  {icon}
                 </span>
-              )}
-            </button>
-          ))}
+                <div className="min-w-0 flex-1">
+                  <div className="truncate">{primary}</div>
+                  <div className="truncate font-mono text-xs text-neutral-500">
+                    {secondary}
+                  </div>
+                </div>
+                <span className="shrink-0 text-[11px] text-neutral-500">{meta}</span>
+                {i === index && (
+                  <span className="shrink-0 text-[11px] text-neutral-500">↵</span>
+                )}
+              </button>
+            );
+          })}
         </div>
         {flash && (
           <div className="border-t border-neutral-800 bg-red-950/50 px-4 py-1.5 text-xs text-red-300">

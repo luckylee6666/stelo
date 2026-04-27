@@ -297,6 +297,11 @@ export async function chat(
 
 /* ──────────────── Agent：tool_use 协议 ──────────────── */
 
+export type TokenUsage = {
+  inputTokens: number;
+  outputTokens: number;
+};
+
 export type AgentTurnResult = {
   /** 纯文本段（展示给用户的"AI 想法"） */
   text: string;
@@ -306,6 +311,8 @@ export type AgentTurnResult = {
   rawBlocks: AgentContentBlock[];
   /** "end_turn" / "tool_use" / "stop" / "max_tokens" 等 */
   stopReason: string;
+  /** 本轮 token 用量（部分 provider 不返回则为 undefined） */
+  usage?: TokenUsage;
 };
 
 export type AgentStreamOptions = {
@@ -393,6 +400,8 @@ async function streamClaudeAgent(
   };
   const blocks: Record<number, Block> = {};
   let stopReason = "";
+  let inputTokens = 0;
+  let outputTokens = 0;
 
   for await (const chunk of iterSseChunks(res.body)) {
     for (const line of dataLines(chunk)) {
@@ -404,7 +413,15 @@ async function streamClaudeAgent(
         continue;
       }
       const type = ev.type as string;
-      if (type === "content_block_start") {
+      // Claude message_start 携带 input_tokens；message_delta.usage 携带 output_tokens
+      if (type === "message_start") {
+        const u = (ev as { message?: { usage?: { input_tokens?: number; output_tokens?: number } } })
+          .message?.usage;
+        if (u) {
+          inputTokens = u.input_tokens ?? inputTokens;
+          outputTokens = u.output_tokens ?? outputTokens;
+        }
+      } else if (type === "content_block_start") {
         const idx = ev.index as number;
         const cb = (ev as { content_block: { type: string; id?: string; name?: string } })
           .content_block;
@@ -441,8 +458,9 @@ async function streamClaudeAgent(
           opts.onToolCall?.({ id: b.id, command: cmd });
         }
       } else if (type === "message_delta") {
-        const d = (ev as { delta?: { stop_reason?: string } }).delta;
-        if (d?.stop_reason) stopReason = d.stop_reason;
+        const d = (ev as { delta?: { stop_reason?: string }; usage?: { output_tokens?: number } });
+        if (d?.delta?.stop_reason) stopReason = d.delta.stop_reason;
+        if (d?.usage?.output_tokens != null) outputTokens = d.usage.output_tokens;
       }
     }
   }
@@ -474,7 +492,11 @@ async function streamClaudeAgent(
       }
     }
   }
-  return { text: textAll, toolCalls, rawBlocks, stopReason };
+  const usage =
+    inputTokens > 0 || outputTokens > 0
+      ? { inputTokens, outputTokens }
+      : undefined;
+  return { text: textAll, toolCalls, rawBlocks, stopReason, usage };
 }
 
 async function streamOpenAiAgent(
@@ -526,6 +548,8 @@ async function streamOpenAiAgent(
     { id?: string; name?: string; args: string }
   > = {};
   let stopReason = "";
+  let inputTokens = 0;
+  let outputTokens = 0;
 
   for await (const chunk of iterSseChunks(res.body)) {
     for (const line of dataLines(chunk)) {
@@ -542,11 +566,20 @@ async function streamOpenAiAgent(
           };
           finish_reason?: string;
         }[];
+        usage?: {
+          prompt_tokens?: number;
+          completion_tokens?: number;
+        };
       };
       try {
         ev = JSON.parse(line);
       } catch {
         continue;
+      }
+      // OpenAI 兼容：最后一个 chunk 通常带 usage
+      if (ev.usage) {
+        if (ev.usage.prompt_tokens != null) inputTokens = ev.usage.prompt_tokens;
+        if (ev.usage.completion_tokens != null) outputTokens = ev.usage.completion_tokens;
       }
       const choice = ev.choices?.[0];
       if (!choice) continue;
@@ -587,7 +620,11 @@ async function streamOpenAiAgent(
       }
     }
   }
-  return { text: textAll, toolCalls, rawBlocks, stopReason };
+  const usage =
+    inputTokens > 0 || outputTokens > 0
+      ? { inputTokens, outputTokens }
+      : undefined;
+  return { text: textAll, toolCalls, rawBlocks, stopReason, usage };
 }
 
 /** 把 AgentMessage 转为 OpenAI 格式。tool_result 块转 role=tool。 */
