@@ -63,6 +63,8 @@ const ALLOWED_COMMANDS = new Set([
   "forward_stop",
   // 长任务取消
   "task_cancel",
+  // 诊断
+  "diagnostic_bundle_to_file",
   // tauri-plugin-* 内置命令（dialog / opener / http 等）以 plugin: 前缀进入，跳过校验
 ]);
 

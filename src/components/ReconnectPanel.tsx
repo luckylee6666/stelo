@@ -4,6 +4,7 @@ import { useSessionStore, type Session } from "../stores/sessions";
 import { useKeyStore } from "../stores/keys";
 import { startForwardsForSession } from "../lib/forwards";
 import { sshConnect } from "../lib/sshConnect";
+import { diagnoseSshError } from "../lib/sshErrors";
 
 type Props = {
   session: Session;
@@ -174,11 +175,29 @@ export function ReconnectPanel({ session }: Props) {
           </label>
         </fieldset>
 
-        {error && (
-          <div className="mt-3 rounded border border-red-900/50 bg-red-950/40 px-2 py-1.5 text-xs text-red-300">
-            {error}
-          </div>
-        )}
+        {error && (() => {
+          const diag = diagnoseSshError(error);
+          return (
+            <div className="mt-3 rounded border border-red-900/60 bg-red-950/40 p-2.5 text-xs text-red-200">
+              <div className="mb-1.5 font-semibold text-red-100">
+                ⚠ {diag.title}
+              </div>
+              <ul className="ml-4 list-disc space-y-0.5 text-red-200/85">
+                {diag.hints.map((h, i) => (
+                  <li key={i}>{h}</li>
+                ))}
+              </ul>
+              <details className="mt-2 text-[10px] text-red-300/60">
+                <summary className="cursor-pointer hover:text-red-300">
+                  原始错误信息
+                </summary>
+                <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-all font-mono">
+                  {diag.raw}
+                </pre>
+              </details>
+            </div>
+          );
+        })()}
 
         <div className="mt-5 flex items-center justify-between">
           <button

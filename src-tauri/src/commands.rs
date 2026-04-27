@@ -1,4 +1,4 @@
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use zeroize::Zeroize;
 
 use crate::audit;
@@ -479,6 +479,96 @@ pub async fn sftp_upload(
 #[tauri::command(rename_all = "camelCase")]
 pub fn task_cancel(task_id: String) -> Result<bool, String> {
     Ok(crate::task_cancel::cancel(&task_id))
+}
+
+/// 一键诊断包：导出最近 audit.log 尾部 + sessions(脱敏) + 系统信息 → 单个 JSON
+/// 用户报 bug 时一键打包贴给开发者，不含密码 / API key
+#[tauri::command(rename_all = "camelCase")]
+pub fn diagnostic_bundle_to_file(app: AppHandle, path: String) -> Result<(), String> {
+    let target = validate_backup_path(&path)?;
+    let bundle = build_diagnostic_bundle(&app)?;
+    let text = serde_json::to_string_pretty(&bundle).map_err(|e| e.to_string())?;
+    if let Some(parent) = target.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(&target, text)
+        .map_err(|e| format!("write {} failed: {}", target.display(), e))
+}
+
+fn build_diagnostic_bundle(app: &AppHandle) -> Result<serde_json::Value, String> {
+    use std::fs;
+
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("resolve app_data_dir: {e}"))?;
+
+    // 读 audit.log 尾部 200 行
+    let audit_tail: Vec<String> = match fs::read_to_string(dir.join("audit.log")) {
+        Ok(s) => s.lines().rev().take(200).map(String::from).collect::<Vec<_>>().into_iter().rev().collect(),
+        Err(_) => Vec::new(),
+    };
+
+    // 读 sessions（已脱敏：去 keyPath 真实路径）
+    let sessions_redacted: Vec<serde_json::Value> = sessions_store::load(&app)
+        .map(|list| {
+            list.into_iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "id": s.id,
+                        "name": s.name,
+                        "host_redacted": redact_host(&s.host),
+                        "port": s.port,
+                        "auth_mode": s.auth_mode,
+                        "has_key_id": s.key_id.is_some(),
+                        "has_key_path": s.key_path.is_some(),
+                        "color_label": s.color_label,
+                        "sync_input": s.sync_input,
+                        "n_forwards": s.port_forwards.len(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let system_info = serde_json::json!({
+        "stelo_version": env!("CARGO_PKG_VERSION"),
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "rust_target": std::env::consts::FAMILY,
+    });
+
+    Ok(serde_json::json!({
+        "schema_version": 1,
+        "exported_at": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
+        "system": system_info,
+        "sessions_redacted": sessions_redacted,
+        "audit_log_tail": audit_tail,
+        "note": "本诊断包不含密码 / API key / 私钥；host 已脱敏到第一段域名。",
+    }))
+}
+
+/// 把 host 脱敏到一段：example.com → ex***.com；ip 保留首字节
+fn redact_host(host: &str) -> String {
+    if let Ok(_) = host.parse::<std::net::IpAddr>() {
+        // ip 只保留前缀
+        let parts: Vec<&str> = host.split('.').collect();
+        if parts.len() == 4 {
+            return format!("{}.{}.x.x", parts[0], parts[1]);
+        }
+        return "ip-redacted".into();
+    }
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.len() < 2 {
+        return "***".into();
+    }
+    let first = parts[0];
+    let head: String = first.chars().take(2).collect();
+    let suffix = &parts[parts.len().saturating_sub(2)..].join(".");
+    format!("{}***.{}", head, suffix)
 }
 
 #[tauri::command(rename_all = "camelCase")]

@@ -5,8 +5,16 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
+/// sessions.json 内顶层 schema 版本号。
+/// 当 SavedSession 字段含义变更时升版，并在 load() 里写迁移分支。
+/// v1: 当前。
+pub const SESSIONS_SCHEMA_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedSession {
+    /// 单条记录的 schema 版本号——未来字段语义改变时升版，load 时按版本走迁移函数
+    #[serde(default = "default_session_schema")]
+    pub schema_version: u32,
     pub id: String,
     pub name: String,
     pub host: String,
@@ -31,6 +39,10 @@ pub struct SavedSession {
     /// 是否参与"多会话同步输入"
     #[serde(default)]
     pub sync_input: bool,
+}
+
+fn default_session_schema() -> u32 {
+    SESSIONS_SCHEMA_VERSION
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -235,6 +247,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let file = dir.path().join("sessions.json");
         let sessions = vec![SavedSession {
+            schema_version: SESSIONS_SCHEMA_VERSION,
             id: "sess-1".into(),
             name: "prod-web".into(),
             host: "82.156.196.149".into(),

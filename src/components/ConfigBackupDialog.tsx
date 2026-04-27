@@ -10,6 +10,7 @@ import {
   Upload,
   Loader2,
   Database,
+  Stethoscope,
 } from "lucide-react";
 
 type Props = {
@@ -59,6 +60,30 @@ export function ConfigBackupDialog({ onClose }: Props) {
       onClose();
     } catch (e) {
       toast.error("导出失败", { description: String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doDiagnostic = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const date = new Date().toISOString().slice(0, 10);
+      const target = await saveFileDialog({
+        defaultPath: `stelo-diagnostic-${date}.json`,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!target) {
+        setBusy(false);
+        return;
+      }
+      await invoke("diagnostic_bundle_to_file", { path: target });
+      toast.success("诊断包已导出", {
+        description: `${target} · 已脱敏（host / 不含密码 / API key）`,
+      });
+    } catch (e) {
+      toast.error("诊断包导出失败", { description: String(e) });
     } finally {
       setBusy(false);
     }
@@ -134,6 +159,15 @@ export function ConfigBackupDialog({ onClose }: Props) {
           >
             {busy ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
             从 JSON 文件导入（全量覆盖）
+          </button>
+          <button
+            onClick={doDiagnostic}
+            disabled={busy}
+            className="flex w-full items-center justify-center gap-2 rounded border border-neutral-700 bg-neutral-950/40 px-3 py-2 text-sm font-medium text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+            title="导出诊断包（含审计日志尾部 + host 脱敏的 sessions + 系统信息）方便排查问题"
+          >
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <Stethoscope size={14} />}
+            导出诊断包（脱敏，用于报 bug）
           </button>
         </div>
 
