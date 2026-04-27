@@ -55,11 +55,22 @@ fn load_at(file: &Path) -> Result<Store> {
 fn save_at(file: &Path, store: &Store) -> Result<()> {
     let text = serde_json::to_string_pretty(store)?;
     let tmp = file.with_extension("json.tmp");
-    fs::write(&tmp, text).with_context(|| format!("write {} failed", tmp.display()))?;
-    #[cfg(unix)]
+    // fd-level chmod 无 TOCTOU
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600));
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp)
+            .with_context(|| format!("open {} failed", tmp.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = f.set_permissions(fs::Permissions::from_mode(0o600));
+        }
+        f.write_all(text.as_bytes())
+            .with_context(|| format!("write {} failed", tmp.display()))?;
     }
     fs::rename(&tmp, file)
         .with_context(|| format!("rename to {} failed", file.display()))?;

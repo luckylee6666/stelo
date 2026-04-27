@@ -1,6 +1,12 @@
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
+
+/// 拿 Mutex 时恢复中毒锁——这些 Mutex 都是 `Mutex<Option<...>>` 简单存值，
+/// panic 不会破坏不变量，恢复 poison 比传染 panic 更安全。
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 use anyhow::{anyhow, Context};
 use base64::engine::general_purpose::STANDARD as B64;
@@ -307,14 +313,14 @@ impl client::Handler for SshClient {
                     ) {
                         warn!("known_hosts upsert failed: {:?}", e);
                     }
-                    *self.outcome.lock().unwrap() = Some(HostKeyOutcome::NewlyTrusted {
+                    *lock(&self.outcome) = Some(HostKeyOutcome::NewlyTrusted {
                         fingerprint: fp,
                         key_type: kt,
                     });
                     Ok(true)
                 } else {
                     // 首次连接、用户未确认 → 中止握手，外层抛 HOSTKEY_UNVERIFIED 让前端弹确认
-                    *self.unverified.lock().unwrap() = Some(HostKeyUnverified {
+                    *lock(&self.unverified) = Some(HostKeyUnverified {
                         fingerprint: fp,
                         key_type: kt,
                     });
@@ -322,7 +328,7 @@ impl client::Handler for SshClient {
                 }
             }
             Some(known) if known.fingerprint == fp && known.key_type == kt => {
-                *self.outcome.lock().unwrap() = Some(HostKeyOutcome::Matched);
+                *lock(&self.outcome) = Some(HostKeyOutcome::Matched);
                 Ok(true)
             }
             Some(known) => {
@@ -334,14 +340,14 @@ impl client::Handler for SshClient {
                         kt.clone(),
                         fp.clone(),
                     );
-                    *self.outcome.lock().unwrap() =
+                    *lock(&self.outcome) =
                         Some(HostKeyOutcome::TrustedReplacement {
                             old: known.fingerprint.clone(),
                             new: fp.clone(),
                         });
                     Ok(true)
                 } else {
-                    *self.mismatch.lock().unwrap() = Some(HostKeyMismatch {
+                    *lock(&self.mismatch) = Some(HostKeyMismatch {
                         expected_fingerprint: known.fingerprint.clone(),
                         expected_key_type: known.key_type.clone(),
                         got_fingerprint: fp,
@@ -388,7 +394,7 @@ pub async fn connect(
     let mut handle: Handle<SshClient> = match connect_result {
         Ok(h) => h,
         Err(e) => {
-            if let Some(uv) = unverified.lock().unwrap().take() {
+            if let Some(uv) = lock(&unverified).take() {
                 return Err(anyhow!(
                     "HOSTKEY_UNVERIFIED {}",
                     serde_json::json!({
@@ -399,7 +405,7 @@ pub async fn connect(
                     })
                 ));
             }
-            if let Some(mm) = mismatch.lock().unwrap().take() {
+            if let Some(mm) = lock(&mismatch).take() {
                 return Err(anyhow!(
                     "HOSTKEY_MISMATCH {}",
                     serde_json::json!({
@@ -416,7 +422,7 @@ pub async fn connect(
         }
     };
     // 新主机 TOFU / 替换密钥：日志 + 事件通知前端，让用户知道"首次记录"
-    if let Some(out) = outcome.lock().unwrap().take() {
+    if let Some(out) = lock(&outcome).take() {
         match out {
             HostKeyOutcome::NewlyTrusted { fingerprint, key_type } => {
                 info!("known_hosts TOFU: {}:{} {} {}", cfg.host, cfg.port, key_type, fingerprint);

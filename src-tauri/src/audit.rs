@@ -82,10 +82,12 @@ fn append_line(file: &Path, line: &str) -> Result<()> {
         .open(file)
         .with_context(|| format!("open {} failed", file.display()))?;
 
+    // chmod 600 在 **fd** 上做（用 set_permissions 走的是 path，会有 TOCTOU 窗口）
+    // f.set_permissions() 走 fd 路径（fchmod），原子无窗口。
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(file, fs::Permissions::from_mode(0o600));
+        let _ = f.set_permissions(fs::Permissions::from_mode(0o600));
     }
 
     f.write_all(line.as_bytes())

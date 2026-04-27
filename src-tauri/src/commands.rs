@@ -41,32 +41,67 @@ fn fmt_err(err: anyhow::Error) -> String {
 
 fn redact_paths(s: &str) -> String {
     // 简单字面替换；不引入 regex 依赖。
-    // /Users/<single segment>/ → ~/
+    // 目标：
+    //   /Users/<name>/...  → ~/...   (macOS)
+    //   /home/<name>/...   → ~/...   (Linux)
+    //   /private/var/folders/.../<rand>/...  → /tmp/...  (macOS sandbox/temp)
+    //   /var/folders/.../<rand>/...          → /tmp/...
+    //   /private/tmp/...                     → /tmp/...
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
     let bytes = s.as_bytes();
-    while i < bytes.len() {
-        // 检测 /Users/ 或 /home/ 起点
+    let len = bytes.len();
+    while i < len {
+        // home 段
         let prefix_len = if s[i..].starts_with("/Users/") {
-            7
+            Some(7)
         } else if s[i..].starts_with("/home/") {
-            6
+            Some(6)
         } else {
-            out.push(bytes[i] as char);
-            i += 1;
-            continue;
+            None
         };
-        // 跳过用户名（直到下一个 / 或非路径字符）
-        let mut j = i + prefix_len;
-        while j < bytes.len() {
-            let c = bytes[j];
-            if c == b'/' || c == b' ' || c == b'\n' || c == b'\t' || c == b'"' || c == b'\'' {
-                break;
+        if let Some(plen) = prefix_len {
+            let mut j = i + plen;
+            while j < len {
+                let c = bytes[j];
+                if c == b'/' || c == b' ' || c == b'\n' || c == b'\t' || c == b'"' || c == b'\'' {
+                    break;
+                }
+                j += 1;
             }
-            j += 1;
+            out.push('~');
+            i = j;
+            continue;
         }
-        out.push('~');
-        i = j;
+        // macOS 临时目录：/private/var/folders/<2>/<rand>/T 这样的路径
+        if s[i..].starts_with("/private/var/folders/") || s[i..].starts_with("/var/folders/") {
+            // 跳到第三个 / 后面
+            let start = i;
+            let skip_prefix = if s[i..].starts_with("/private/") { 9 } else { 0 };
+            // 跳两段（folders/<2chars>/<rand>）
+            let mut j = start + skip_prefix + "/var/folders/".len();
+            for _ in 0..2 {
+                while j < len && bytes[j] != b'/' {
+                    j += 1;
+                }
+                if j < len {
+                    j += 1;
+                }
+            }
+            // 此时 j 指向 .../folders/AB/abc123/ 之后；
+            out.push_str("/tmp");
+            // 把后续 path 段保留（如 /T/foo）
+            // 但跳过下一个 '/' 之前的 1 段（折叠到 /tmp）
+            i = j.saturating_sub(1); // 留下后面的 /
+            continue;
+        }
+        if s[i..].starts_with("/private/tmp/") {
+            out.push_str("/tmp");
+            i += "/private/tmp".len();
+            continue;
+        }
+        out.push(bytes[i] as char);
+        i += 1;
     }
     out
 }
@@ -681,6 +716,24 @@ mod backup_path_tests {
         assert_eq!(redact_paths("/etc/passwd"), "/etc/passwd");
         assert_eq!(redact_paths("/tmp/foo"), "/tmp/foo");
         assert_eq!(redact_paths("plain message"), "plain message");
+    }
+
+    #[test]
+    fn redact_paths_macos_tmp_folders() {
+        use super::redact_paths;
+        // /private/var/folders/<2chars>/<rand>/T/something → /tmp/T/something
+        let r = redact_paths("error /private/var/folders/9k/abc123def/T/stelo-foo: nope");
+        assert!(r.contains("/tmp"), "got: {}", r);
+        assert!(!r.contains("9k") || !r.contains("abc123def"), "got: {}", r);
+
+        let r2 = redact_paths("/var/folders/zz/xyz/T/file");
+        assert!(r2.contains("/tmp"), "got: {}", r2);
+    }
+
+    #[test]
+    fn redact_paths_private_tmp() {
+        use super::redact_paths;
+        assert_eq!(redact_paths("/private/tmp/foo.json"), "/tmp/foo.json");
     }
 
     #[test]

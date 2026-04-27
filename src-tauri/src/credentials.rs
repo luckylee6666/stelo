@@ -58,11 +58,22 @@ fn load_or_init_master_salt(file: &Path) -> Result<[u8; 32]> {
     let mut out = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut out);
     let tmp = file.with_extension("salt.tmp");
-    fs::write(&tmp, &out).with_context(|| format!("write {} failed", tmp.display()))?;
-    #[cfg(unix)]
+    // 用 OpenOptions 创建文件并对 fd 立刻 chmod，避免 fs::write 后 set_permissions 之间的 TOCTOU 窗口
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600));
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp)
+            .with_context(|| format!("open {} failed", tmp.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = f.set_permissions(fs::Permissions::from_mode(0o600));
+        }
+        f.write_all(&out)
+            .with_context(|| format!("write {} failed", tmp.display()))?;
     }
     fs::rename(&tmp, file)
         .with_context(|| format!("rename to {} failed", file.display()))?;
@@ -249,13 +260,22 @@ fn write_all_at(
     let text = serde_json::to_string_pretty(&env)?;
 
     let tmp = file.with_extension("json.tmp");
-    fs::write(&tmp, text).with_context(|| format!("write {} failed", tmp.display()))?;
-
-    #[cfg(unix)]
+    // OpenOptions + fd-level chmod，无 TOCTOU 窗口
     {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = fs::Permissions::from_mode(0o600);
-        let _ = fs::set_permissions(&tmp, perms);
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp)
+            .with_context(|| format!("open {} failed", tmp.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = f.set_permissions(fs::Permissions::from_mode(0o600));
+        }
+        f.write_all(text.as_bytes())
+            .with_context(|| format!("write {} failed", tmp.display()))?;
     }
 
     fs::rename(&tmp, file)

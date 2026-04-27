@@ -6,7 +6,7 @@ use russh::client::Handle;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tokio::net::TcpListener;
-use tokio::sync::Semaphore;
+use tokio::sync::{Notify, Semaphore};
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
@@ -42,6 +42,9 @@ pub struct ForwardEvent {
 
 pub struct ForwardHandle {
     pub task: JoinHandle<()>,
+    /// 通知所有 inner 连接 task 立刻退出（accept loop + relay tasks）。
+    /// 不通过 abort() 是因为 abort 只 cancel 顶层 task，不传染 inner spawn。
+    pub cancel: Arc<Notify>,
 }
 
 #[derive(Default)]
@@ -115,11 +118,23 @@ pub async fn start(
 
     // 每条规则一个并发上限：超过 MAX_CONCURRENT_FORWARD_CONNS 个活跃连接时新连接挂起等待
     let conn_limit = Arc::new(Semaphore::new(MAX_CONCURRENT_FORWARD_CONNS));
+    // 取消信号：forward_stop 时 notify_waiters 触发所有 in-flight relay 立即退出
+    let cancel = Arc::new(Notify::new());
+    let cancel_for_outer = cancel.clone();
 
     let task = tokio::spawn(async move {
         let event = format!("forward:status:{}", session_for_task);
         loop {
-            let (mut socket, peer) = match listener.accept().await {
+            // 监听 accept 和 cancel 信号；cancel 命中就立即跳出 accept loop，
+            // listener 被 drop → fd 关闭，操作系统拒绝新连接。
+            let accept_res = tokio::select! {
+                _ = cancel_for_outer.notified() => {
+                    info!("forward cancel signaled, breaking accept loop on rule {}", rid_for_err);
+                    break;
+                }
+                a = listener.accept() => a,
+            };
+            let (mut socket, peer) = match accept_res {
                 Ok(v) => v,
                 Err(e) => {
                     warn!("forward accept failed on rule {}: {e:?}", rid_for_err);
@@ -129,6 +144,7 @@ pub async fn start(
             let handle = ssh_handle.clone();
             let rhost_c = rhost.clone();
             let limit = conn_limit.clone();
+            let inner_cancel = cancel_for_outer.clone();
             // 拿不到 permit 立即丢弃这条 socket，比无限堆 task 安全
             let permit = match limit.try_acquire_owned() {
                 Ok(p) => p,
@@ -142,7 +158,7 @@ pub async fn start(
                 }
             };
             tokio::spawn(async move {
-                let _permit = permit; // 在 task 结束时自动释放
+                let _permit = permit; // task 结束自动释放
                 let channel = match handle
                     .channel_open_direct_tcpip(
                         rhost_c,
@@ -159,7 +175,15 @@ pub async fn start(
                     }
                 };
                 let mut stream = channel.into_stream();
-                let _ = tokio::io::copy_bidirectional(&mut socket, &mut stream).await;
+                // copy_bidirectional 与 cancel 二选一：stop_forward 时立即结束 relay
+                tokio::select! {
+                    _ = inner_cancel.notified() => {
+                        // 显式 drop socket / stream；channel 关闭由 russh handle drop 兜底
+                        drop(socket);
+                        drop(stream);
+                    }
+                    _ = tokio::io::copy_bidirectional(&mut socket, &mut stream) => {}
+                }
             });
         }
         let _ = app_for_task.emit(
@@ -172,12 +196,14 @@ pub async fn start(
         );
     });
 
-    registry.insert(rule.id, ForwardHandle { task });
+    registry.insert(rule.id, ForwardHandle { task, cancel });
     Ok(())
 }
 
 pub fn stop(registry: Arc<DashMap<String, ForwardHandle>>, rule_id: &str) {
     if let Some((_, h)) = registry.remove(rule_id) {
+        // 先 notify 让 inner relay 优雅退出（drop socket/stream），再 abort 顶层 accept loop
+        h.cancel.notify_waiters();
         h.task.abort();
     }
 }

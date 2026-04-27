@@ -130,15 +130,25 @@ pub fn save(app: &AppHandle, sessions: &[SavedSession]) -> Result<()> {
 fn write_json<T: serde::Serialize + ?Sized>(file: PathBuf, v: &T) -> Result<()> {
     let text = serde_json::to_string_pretty(v)?;
     let tmp = file.with_extension("json.tmp");
-    fs::write(&tmp, text).with_context(|| format!("write {} failed", tmp.display()))?;
 
     // 即使没有"密码"也别让其他用户读：sessions.json 暴露 user@host 列表，
     // history.json 可能含敏感命令参数。chmod 600 跟 credentials.json 一致。
-    #[cfg(unix)]
+    // 用 OpenOptions + fd-level chmod，无 TOCTOU 窗口（先 write 再 set_permissions 会留下短暂的可读窗口）。
     {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = fs::Permissions::from_mode(0o600);
-        let _ = fs::set_permissions(&tmp, perms);
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp)
+            .with_context(|| format!("open {} failed", tmp.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = f.set_permissions(fs::Permissions::from_mode(0o600));
+        }
+        f.write_all(text.as_bytes())
+            .with_context(|| format!("write {} failed", tmp.display()))?;
     }
 
     fs::rename(&tmp, &file).with_context(|| format!("rename to {} failed", file.display()))?;

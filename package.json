@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "audit:rust": "cd src-tauri && cargo audit --ignore RUSTSEC-2023-0071",
+    "audit:js": "pnpm audit --prod"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

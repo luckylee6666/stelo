@@ -1,0 +1,23 @@
+# cargo-audit configuration
+# 跑：cargo audit
+#
+# 真实漏洞已全部修复或文档化在下方。Linux GTK 相关的 unmaintained 警告在 macOS 平台上不实际加载。
+
+[advisories]
+# 允许的 advisory（必须有正当理由，且每条都要追踪修复进展）
+ignore = [
+    # rsa 0.9.10 — Marvin Attack timing side-channel (medium 5.9)
+    # 来源：russh 0.51 → russh-crypto → rsa
+    # 现状：rsa crate 上游无 fix 版本（截至 2026-04）；russh 也未切换实现
+    # 评估：Stelo 不主动用 RSA 私钥（推荐 ED25519）；即使用户用 RSA key，攻击需本地能精确测时
+    # 跟踪：等 russh 升到不依赖 rsa 0.9.x 的版本（或 RustCrypto/RSA 发常时间实现）
+    "RUSTSEC-2023-0071",
+]
+
+# Linux GTK 相关的 unmaintained 警告（atk / gdk / gtk / soup2 等）：
+# Stelo 当前仅 ship macOS dmg，不进 Linux GTK 路径。Tauri 2 在 Linux 用 webkit2gtk
+# 仍依赖这些包，但运行时不被加载。等 Tauri 升级到 GTK4-based 后会自动消除。
+# 不 ignore 这些是为了升 Tauri 时能看到提示。
+
+[output]
+deny = ["unsound", "unmaintained", "yanked"]
