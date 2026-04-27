@@ -43,6 +43,9 @@ export function UploadDialog({ backendId, defaultRemote, files, onClose }: Props
   const [sudoMode, setSudoMode] = useState(false);
   const [sudoPassword, setSudoPassword] = useState(cachedPw);
   const hasCachedPw = cachedPw.length > 0;
+  const [cancelled, setCancelled] = useState(false);
+  // 当前正在跑的 task_id（前端生成 UUID，后端注册 cancel notify）
+  const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     let un: UnlistenFn | null = null;
@@ -63,12 +66,16 @@ export function UploadDialog({ backendId, defaultRemote, files, onClose }: Props
     setUploading(true);
     setError(null);
     setDoneCount(0);
+    setCancelled(false);
     // 本次循环里是否已经升级到 sudo 模式（避免每个文件都先 SFTP 失败再 sudo）
     let useSudo = sudoMode;
     let pw = sudoPassword;
     try {
       for (let i = 0; i < files.length; i++) {
         setCurrentIdx(i);
+        // 每个文件一个独立 task_id，便于精确 cancel
+        const tid = `upload-${backendId}-${Date.now()}-${i}`;
+        setCurrentTaskId(tid);
         try {
           if (useSudo) {
             await invoke<string>("sftp_upload_with_sudo", {
@@ -82,6 +89,7 @@ export function UploadDialog({ backendId, defaultRemote, files, onClose }: Props
               sessionId: backendId,
               localPath: files[i],
               remotePath: remote,
+              taskId: tid,
             });
           }
         } catch (err) {
@@ -120,7 +128,13 @@ export function UploadDialog({ backendId, defaultRemote, files, onClose }: Props
       setTimeout(onClose, 400);
     } catch (err) {
       const msg = String(err);
-      setError(msg);
+      // 取消导致的"upload cancelled by user"不当作错误展示
+      if (/cancelled by user/i.test(msg)) {
+        setError(null);
+        setCancelled(true);
+      } else {
+        setError(msg);
+      }
       // sudo 密码错了立即清掉缓存，下次重新输
       if (/sudo password incorrect/i.test(msg)) {
         clearCachedSudo(backendId);
@@ -128,6 +142,16 @@ export function UploadDialog({ backendId, defaultRemote, files, onClose }: Props
       }
     } finally {
       setUploading(false);
+      setCurrentTaskId(null);
+    }
+  };
+
+  const cancelUpload = async () => {
+    if (!currentTaskId) return;
+    try {
+      await invoke<boolean>("task_cancel", { taskId: currentTaskId });
+    } catch {
+      /* 静默：可能后端已结束 */
     }
   };
 
@@ -295,15 +319,32 @@ export function UploadDialog({ backendId, defaultRemote, files, onClose }: Props
           </label>
         )}
 
+        {cancelled && (
+          <div className="mt-3 rounded border border-amber-700/60 bg-amber-950/30 px-2 py-1.5 text-xs text-amber-200">
+            上传已取消（部分文件可能已传完）。
+          </div>
+        )}
+
         <div className="mt-5 flex justify-end gap-2">
-          <button
-            type="button"
-            disabled={uploading}
-            onClick={onClose}
-            className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
-          >
-            {uploading ? "进行中…" : "取消"}
-          </button>
+          {uploading ? (
+            <button
+              type="button"
+              onClick={cancelUpload}
+              disabled={!currentTaskId || sudoMode}
+              title={sudoMode ? "sudo 上传暂不支持中途取消" : "停止当前文件上传"}
+              className="rounded border border-red-700/60 bg-red-950/40 px-3 py-1.5 text-sm text-red-200 hover:bg-red-900/40 disabled:opacity-40"
+            >
+              ⏹ 停止
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800"
+            >
+              关闭
+            </button>
+          )}
           <button
             type="button"
             disabled={uploading || !remote.trim()}

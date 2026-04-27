@@ -61,6 +61,8 @@ const ALLOWED_COMMANDS = new Set([
   // 端口转发
   "forward_start",
   "forward_stop",
+  // 长任务取消
+  "task_cancel",
   // tauri-plugin-* 内置命令（dialog / opener / http 等）以 plugin: 前缀进入，跳过校验
 ]);
 

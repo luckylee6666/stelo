@@ -2,6 +2,7 @@ mod audit;
 mod commands;
 mod credentials;
 mod forward;
+mod task_cancel;
 mod known_hosts;
 mod metrics;
 mod sessions_store;
@@ -20,6 +21,7 @@ use commands::{
     sftp_read, sftp_read_bytes, sftp_rename, sftp_upload, sftp_upload_dir, sftp_upload_with_sudo,
     sftp_write,
     sftp_write_bytes, snippets_load, snippets_save, ssh_connect, ssh_disconnect, ssh_exec_sudo,
+    task_cancel,
     ssh_resize, ssh_send,
 };
 use forward::ForwardRegistry;
@@ -82,6 +84,7 @@ pub fn run() {
             history_save,
             ai_providers_load,
             ai_providers_save,
+            task_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

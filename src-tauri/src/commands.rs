@@ -468,11 +468,17 @@ pub async fn sftp_upload(
     session_id: String,
     local_path: String,
     remote_path: String,
+    task_id: Option<String>,
 ) -> Result<String, String> {
     let handle = ssh::ssh_handle(registry.sessions(), &session_id).map_err(|e| e.to_string())?;
-    sftp::upload(app, handle, session_id, local_path, remote_path)
+    sftp::upload(app, handle, session_id, local_path, remote_path, task_id)
         .await
         .map_err(fmt_err)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn task_cancel(task_id: String) -> Result<bool, String> {
+    Ok(crate::task_cancel::cancel(&task_id))
 }
 
 #[tauri::command(rename_all = "camelCase")]

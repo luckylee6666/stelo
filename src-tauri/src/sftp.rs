@@ -329,6 +329,7 @@ pub async fn upload(
     session_id: String,
     local_path: String,
     remote_path: String,
+    task_id: Option<String>,
 ) -> Result<String> {
     let local = expand_home(&local_path);
     validate_local_sftp_path(&local)?;
@@ -366,27 +367,50 @@ pub async fn upload(
     let event = format!("sftp:progress:{}", session_id);
     let mut transferred = 0u64;
     let mut buf = vec![0u8; 64 * 1024];
-    loop {
-        let n = file.read(&mut buf).await.context("read local failed")?;
-        if n == 0 {
-            break;
+
+    // 注册取消通知；进入 loop 前监听
+    let cancel = task_id.as_deref().map(crate::task_cancel::register);
+
+    let result: Result<()> = async {
+        loop {
+            // 每个 chunk 前 race cancel
+            let n = if let Some(c) = &cancel {
+                tokio::select! {
+                    _ = c.notified() => {
+                        return Err(anyhow!("upload cancelled by user"));
+                    }
+                    r = file.read(&mut buf) => r.context("read local failed")?,
+                }
+            } else {
+                file.read(&mut buf).await.context("read local failed")?
+            };
+            if n == 0 {
+                break;
+            }
+            remote
+                .write_all(&buf[..n])
+                .await
+                .context("write remote failed")?;
+            transferred += n as u64;
+            let _ = app.emit(
+                &event,
+                UploadProgress {
+                    local: local.display().to_string(),
+                    remote: remote_resolved.clone(),
+                    transferred,
+                    total: local_size,
+                    done: false,
+                },
+            );
         }
-        remote
-            .write_all(&buf[..n])
-            .await
-            .context("write remote failed")?;
-        transferred += n as u64;
-        let _ = app.emit(
-            &event,
-            UploadProgress {
-                local: local.display().to_string(),
-                remote: remote_resolved.clone(),
-                transferred,
-                total: local_size,
-                done: false,
-            },
-        );
+        Ok(())
     }
+    .await;
+
+    if let Some(tid) = task_id.as_deref() {
+        crate::task_cancel::unregister(tid);
+    }
+    result?;
     remote.shutdown().await.ok();
     let _ = app.emit(
         &event,
@@ -456,6 +480,7 @@ pub async fn upload_with_sudo(
         session_id.clone(),
         local.display().to_string(),
         staging.clone(),
+        None,
     )
     .await
     .context("upload staging to /tmp failed")?;

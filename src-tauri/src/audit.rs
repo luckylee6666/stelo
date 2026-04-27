@@ -217,12 +217,6 @@ pub fn check_credential_save_rate(account: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-pub fn reset_rate_for_tests() {
-    if let Ok(mut m) = RATE_BUCKETS.lock() {
-        m.clear();
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -267,33 +261,39 @@ mod tests {
         assert_eq!(new_content.trim(), "after");
     }
 
+    // 速率测试使用每次都唯一的账户名，避免和并发测试 / 上次跑的残留 bucket 冲突。
+    fn unique_acct(prefix: &str) -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        format!("{}-{}-{}", prefix, now_ts(), N.fetch_add(1, Ordering::SeqCst))
+    }
+
     #[test]
     fn rate_limit_allows_under_threshold() {
-        reset_rate_for_tests();
+        let acct = unique_acct("under");
         for _ in 0..RATE_MAX_HITS {
-            assert!(check_credential_rate("acct-1").is_ok());
+            assert!(check_credential_rate(&acct).is_ok());
         }
     }
 
     #[test]
     fn rate_limit_blocks_over_threshold() {
-        reset_rate_for_tests();
+        let acct = unique_acct("over");
         for _ in 0..RATE_MAX_HITS {
-            assert!(check_credential_rate("acct-2").is_ok());
+            assert!(check_credential_rate(&acct).is_ok());
         }
-        // 第 7 次拒绝
-        assert!(check_credential_rate("acct-2").is_err());
+        assert!(check_credential_rate(&acct).is_err());
     }
 
     #[test]
     fn rate_limit_per_account_independent() {
-        reset_rate_for_tests();
+        let a = unique_acct("indep-A");
+        let b = unique_acct("indep-B");
         for _ in 0..RATE_MAX_HITS {
-            assert!(check_credential_rate("acct-A").is_ok());
+            assert!(check_credential_rate(&a).is_ok());
         }
-        // A 已满，B 还能继续
-        assert!(check_credential_rate("acct-A").is_err());
-        assert!(check_credential_rate("acct-B").is_ok());
+        assert!(check_credential_rate(&a).is_err());
+        assert!(check_credential_rate(&b).is_ok());
     }
 
     #[test]
