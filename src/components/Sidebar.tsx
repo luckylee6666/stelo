@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSessionStore, colorHex, type Session } from "../stores/sessions";
 import { useGroupStore, type Group } from "../stores/groups";
 import { cn } from "../lib/utils";
+import { LS, lsGetJson, lsSetJson } from "../lib/storage";
 import { NewSessionDialog } from "./NewSessionDialog";
 import { ThemeMenu } from "./ThemeMenu";
 import { LangMenu } from "./LangMenu";
@@ -33,20 +34,13 @@ import {
 
 const Radio = RadioIcon;
 
-const LS_COLLAPSED = "hypershell.groupsCollapsed";
-
 function loadCollapsed(): Set<string> {
-  try {
-    const v = localStorage.getItem(LS_COLLAPSED);
-    if (!v) return new Set();
-    return new Set(JSON.parse(v));
-  } catch {
-    return new Set();
-  }
+  const list = lsGetJson<string[]>(LS.groupsCollapsed, []);
+  return new Set(Array.isArray(list) ? list : []);
 }
 
 function saveCollapsed(s: Set<string>) {
-  localStorage.setItem(LS_COLLAPSED, JSON.stringify([...s]));
+  lsSetJson(LS.groupsCollapsed, [...s]);
 }
 
 export function Sidebar() {

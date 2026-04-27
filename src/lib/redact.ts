@@ -61,3 +61,19 @@ export function redactWithReport(input: string): RedactionReport {
   }
   return { text: out, hits };
 }
+
+/**
+ * 把异常对象格式化为给用户看的字符串。统一过滤路径 + 脱敏 token。
+ * 用法：toast.error("操作失败", { description: formatUserError(e) })
+ */
+export function formatUserError(e: unknown, maxLen = 600): string {
+  let raw = "";
+  if (e instanceof Error) raw = e.message;
+  else if (typeof e === "string") raw = e;
+  else raw = String(e);
+
+  // 后端的 fmt_err 已对 /Users/<n>/ 等做了一次脱敏；前端再过一次 redactSecrets 防 token
+  let safe = redactSecrets(raw);
+  if (safe.length > maxLen) safe = safe.slice(0, maxLen) + "...(已截断)";
+  return safe;
+}

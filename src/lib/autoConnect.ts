@@ -1,8 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
 import { useSessionStore, type Session } from "../stores/sessions";
 import { useKeyStore } from "../stores/keys";
 import { startForwardsForSession } from "./forwards";
 import { sshConnect } from "./sshConnect";
+import { formatUserError } from "./redact";
 
 type ConnectResult =
   | { ok: true }
@@ -90,7 +92,13 @@ export async function autoConnect(session: Session): Promise<ConnectResult> {
     const updated = useSessionStore
       .getState()
       .sessions.find((s) => s.id === session.id);
-    if (updated) startForwardsForSession(updated).catch(() => {});
+    if (updated) {
+      startForwardsForSession(updated).catch((err) => {
+        toast.warning(`${session.name}：端口转发启动失败`, {
+          description: formatUserError(err),
+        });
+      });
+    }
     return { ok: true };
   } catch (err) {
     const msg = String(err);

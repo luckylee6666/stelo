@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
+import { formatUserError } from "../lib/redact";
 import {
   useAiStore,
   PRESETS,
@@ -321,7 +322,7 @@ function ProviderForm({
         toast.error(`API 返回 ${res.status}`, { description: safe });
       }
     } catch (e) {
-      toast.error("连接失败", { description: String(e) });
+      toast.error("连接失败", { description: formatUserError(e) });
     } finally {
       setTesting(false);
     }

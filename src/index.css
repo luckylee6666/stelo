@@ -180,6 +180,17 @@ html {
   transition: background-color 220ms ease, color 220ms ease;
 }
 
+/* 大块面板的背景 / 边框也跟随主题平滑过渡，避免主题切换时面板瞬切刺眼。
+   作用域控制在主框架元素，不影响 modal 进出动画 / xterm canvas 等动态层。 */
+.bg-neutral-900,
+.bg-neutral-950,
+.bg-neutral-800,
+.border-neutral-700,
+.border-neutral-800 {
+  transition: background-color 220ms ease, border-color 220ms ease,
+    color 220ms ease;
+}
+
 /* === 商用级 utility class（按需用，不强制） === */
 
 /* 标准输入框 — 高度统一 28px，圆角 6px，焦点蓝环 */

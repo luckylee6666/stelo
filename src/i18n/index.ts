@@ -2,10 +2,9 @@ import { create } from "zustand";
 import zh from "./zh";
 import en from "./en";
 import type { Dict, Lang, LangSetting } from "./types";
+import { LS, lsGet, lsSet } from "../lib/storage";
 export { SUPPORTED_LANGS } from "./types";
 export type { Lang, LangSetting } from "./types";
-
-const LS_LANG = "hypershell.lang";
 
 /** 所有语言字典集中在这里。新增语言时追加一条即可。 */
 const DICTS: Record<Lang, Dict> = { zh, en };
@@ -16,7 +15,7 @@ function systemLang(): Lang {
 }
 
 function readSetting(): LangSetting {
-  const v = localStorage.getItem(LS_LANG);
+  const v = lsGet(LS.lang, null);
   if (v === "zh" || v === "en" || v === "auto") return v;
   return "auto";
 }
@@ -44,7 +43,7 @@ export const useLang = create<LangStore>((set) => {
     setting,
     lang: resolve(setting),
     setLang: (v) => {
-      localStorage.setItem(LS_LANG, v);
+      lsSet(LS.lang, v);
       set({ setting: v, lang: resolve(v) });
     },
   };

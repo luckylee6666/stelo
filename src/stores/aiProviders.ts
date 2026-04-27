@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { LS, lsGet, lsRemove, lsSet } from "../lib/storage";
 
 export type AiKind = "claude" | "openai";
 
@@ -21,22 +22,20 @@ type Store = {
   hydrate: (list: AiProvider[]) => void;
 };
 
-const LS_ACTIVE = "hypershell.aiActiveId";
-
 let counter = 0;
 const newId = () => `ai-${Date.now()}-${counter++}`;
 
 export const useAiStore = create<Store>((set) => ({
   providers: [],
-  activeId: localStorage.getItem(LS_ACTIVE),
+  activeId: lsGet(LS.aiActiveId, null),
   addProvider: (p) => {
     const id = newId();
     set((s) => ({
       providers: [...s.providers, { ...p, id }],
       activeId: s.activeId ?? id,
     }));
-    if (!localStorage.getItem(LS_ACTIVE)) {
-      localStorage.setItem(LS_ACTIVE, id);
+    if (!lsGet(LS.aiActiveId, null)) {
+      lsSet(LS.aiActiveId, id);
     }
     return id;
   },
@@ -48,17 +47,17 @@ export const useAiStore = create<Store>((set) => ({
     set((s) => {
       const next = s.providers.filter((p) => p.id !== id);
       const activeId = s.activeId === id ? (next[0]?.id ?? null) : s.activeId;
-      if (activeId) localStorage.setItem(LS_ACTIVE, activeId);
-      else localStorage.removeItem(LS_ACTIVE);
+      if (activeId) lsSet(LS.aiActiveId, activeId);
+      else lsRemove(LS.aiActiveId);
       return { providers: next, activeId };
     }),
   setActive: (id) => {
-    if (id) localStorage.setItem(LS_ACTIVE, id);
-    else localStorage.removeItem(LS_ACTIVE);
+    if (id) lsSet(LS.aiActiveId, id);
+    else lsRemove(LS.aiActiveId);
     set({ activeId: id });
   },
   hydrate: (list) => {
-    const saved = localStorage.getItem(LS_ACTIVE);
+    const saved = lsGet(LS.aiActiveId, null);
     const activeId =
       saved && list.some((p) => p.id === saved) ? saved : (list[0]?.id ?? null);
     set({ providers: list, activeId });

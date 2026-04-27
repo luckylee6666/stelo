@@ -16,6 +16,7 @@ import {
 } from "../lib/ai";
 import { runAndCapture } from "../lib/agent";
 import { cn } from "../lib/utils";
+import { LS, lsGetBool, lsSet } from "../lib/storage";
 import {
   Sparkles,
   X,
@@ -51,8 +52,6 @@ function basename(p: string): string {
   return i >= 0 ? p.slice(i + 1) : p;
 }
 
-const LS_AGENT = "hypershell.aiAgentMode";
-
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -76,10 +75,10 @@ export function AiPanel({ onClose, onOpenManager }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [agentMode, setAgentMode] = useState<boolean>(
-    () => localStorage.getItem(LS_AGENT) === "1",
+    () => lsGetBool(LS.aiAgentMode, false),
   );
   const toggleAgent = (v: boolean) => {
-    localStorage.setItem(LS_AGENT, v ? "1" : "0");
+    lsSet(LS.aiAgentMode, v);
     setAgentMode(v);
   };
   const [attachments, setAttachments] = useState<Attachment[]>([]);

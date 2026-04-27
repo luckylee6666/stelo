@@ -5,6 +5,7 @@ import {
   save as saveFileDialog,
 } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
+import { formatUserError } from "../lib/redact";
 import {
   Download,
   Upload,
@@ -59,7 +60,7 @@ export function ConfigBackupDialog({ onClose }: Props) {
       toast.success("配置已导出", { description: target });
       onClose();
     } catch (e) {
-      toast.error("导出失败", { description: String(e) });
+      toast.error("导出失败", { description: formatUserError(e) });
     } finally {
       setBusy(false);
     }
@@ -83,7 +84,7 @@ export function ConfigBackupDialog({ onClose }: Props) {
         description: `${target} · 已脱敏（host / 不含密码 / API key）`,
       });
     } catch (e) {
-      toast.error("诊断包导出失败", { description: String(e) });
+      toast.error("诊断包导出失败", { description: formatUserError(e) });
     } finally {
       setBusy(false);
     }
@@ -111,7 +112,7 @@ export function ConfigBackupDialog({ onClose }: Props) {
         window.location.reload();
       }, 800);
     } catch (e) {
-      toast.error("导入失败", { description: String(e) });
+      toast.error("导入失败", { description: formatUserError(e) });
     } finally {
       setBusy(false);
     }

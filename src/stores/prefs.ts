@@ -1,46 +1,27 @@
 import { create } from "zustand";
 import type { CustomTheme } from "../lib/themes";
-
-const LS_THEME = "hypershell.themeId";
-const LS_CWD_PANEL = "hypershell.cwdPanelOpen";
-const LS_CUSTOM_THEMES = "hypershell.customThemes";
-const LS_FONT_SIZE = "hypershell.fontSize";
+import {
+  LS,
+  lsGet,
+  lsGetBool,
+  lsGetInt,
+  lsGetJson,
+  lsSet,
+  lsSetJson,
+} from "../lib/storage";
 
 const MIN_FONT = 9;
 const MAX_FONT = 28;
 const clampFont = (n: number) => Math.max(MIN_FONT, Math.min(MAX_FONT, n));
 
-function readBool(key: string, fallback: boolean): boolean {
-  const v = localStorage.getItem(key);
-  if (v === null) return fallback;
-  return v === "1" || v === "true";
-}
-
-function readStr(key: string, fallback: string): string {
-  return localStorage.getItem(key) ?? fallback;
-}
-
-function readInt(key: string, fallback: number): number {
-  const v = localStorage.getItem(key);
-  if (v === null) return fallback;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
-
 function readCustomThemes(): CustomTheme[] {
-  try {
-    const v = localStorage.getItem(LS_CUSTOM_THEMES);
-    if (!v) return [];
-    const parsed = JSON.parse(v);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((t) => t && t.kind === "custom") as CustomTheme[];
-  } catch {
-    return [];
-  }
+  const list = lsGetJson<unknown>(LS.customThemes, []);
+  if (!Array.isArray(list)) return [];
+  return list.filter((t) => t && (t as { kind?: string }).kind === "custom") as CustomTheme[];
 }
 
 function writeCustomThemes(list: CustomTheme[]) {
-  localStorage.setItem(LS_CUSTOM_THEMES, JSON.stringify(list));
+  lsSetJson(LS.customThemes, list);
 }
 
 type Prefs = {
@@ -57,16 +38,16 @@ type Prefs = {
 };
 
 export const usePrefs = create<Prefs>((set) => ({
-  themeId: readStr(LS_THEME, "system"),
-  cwdPanelOpen: readBool(LS_CWD_PANEL, true),
+  themeId: lsGet(LS.themeId, "system"),
+  cwdPanelOpen: lsGetBool(LS.cwdPanelOpen, true),
   customThemes: readCustomThemes(),
-  fontSize: clampFont(readInt(LS_FONT_SIZE, 13)),
+  fontSize: clampFont(lsGetInt(LS.fontSize, 13)),
   setThemeId: (id) => {
-    localStorage.setItem(LS_THEME, id);
+    lsSet(LS.themeId, id);
     set({ themeId: id });
   },
   setCwdPanelOpen: (v) => {
-    localStorage.setItem(LS_CWD_PANEL, v ? "1" : "0");
+    lsSet(LS.cwdPanelOpen, v);
     set({ cwdPanelOpen: v });
   },
   addCustomTheme: (t) =>
@@ -89,7 +70,7 @@ export const usePrefs = create<Prefs>((set) => ({
     }),
   setFontSize: (n) => {
     const v = clampFont(n);
-    localStorage.setItem(LS_FONT_SIZE, String(v));
+    lsSet(LS.fontSize, v);
     set({ fontSize: v });
   },
 }));

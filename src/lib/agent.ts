@@ -3,16 +3,16 @@ import { listen } from "@tauri-apps/api/event";
 import { useSessionStore } from "../stores/sessions";
 import { redactWithReport } from "./redact";
 
-const LS_STRICT_REDACT = "hypershell.aiStrictRedact";
+import { LS, lsGet, lsSet } from "./storage";
 
 /** 严格模式默认开。命中脱敏规则时整段输出对 AI 屏蔽（只发提示），避免漏检的字段也跟着泄露。 */
 export function isStrictRedactEnabled(): boolean {
-  const v = localStorage.getItem(LS_STRICT_REDACT);
+  const v = lsGet(LS.aiStrictRedact, null);
   return v === null ? true : v !== "false";
 }
 
 export function setStrictRedactEnabled(on: boolean) {
-  localStorage.setItem(LS_STRICT_REDACT, on ? "true" : "false");
+  lsSet(LS.aiStrictRedact, on ? "true" : "false");
 }
 
 export const OSC7_REGEX = /\x1b\]7;[^\x1b\x07]*(?:\x1b\\|\x07)/;

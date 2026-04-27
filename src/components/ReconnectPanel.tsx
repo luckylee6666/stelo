@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
 import { useSessionStore, type Session } from "../stores/sessions";
 import { useKeyStore } from "../stores/keys";
 import { startForwardsForSession } from "../lib/forwards";
 import { sshConnect } from "../lib/sshConnect";
 import { diagnoseSshError } from "../lib/sshErrors";
+import { formatUserError } from "../lib/redact";
 
 type Props = {
   session: Session;
@@ -85,7 +87,11 @@ export function ReconnectPanel({ session }: Props) {
       const updated = useSessionStore
         .getState()
         .sessions.find((s) => s.id === session.id);
-      if (updated) startForwardsForSession(updated).catch(() => {});
+      if (updated) {
+        startForwardsForSession(updated).catch((err) => {
+          toast.warning("部分端口转发启动失败", { description: formatUserError(err) });
+        });
+      }
       const writeAccount =
         session.authMode === "password"
           ? `${session.id}:password`
