@@ -11,9 +11,17 @@ import { useSessionStore, type Session } from "../stores/sessions";
 import { StatusBar } from "./StatusBar";
 import { UploadDialog } from "./UploadDialog";
 import { CwdPanel } from "./CwdPanel";
-import { FileEditor } from "./FileEditor";
+// FileEditor (Monaco ~3MB) / OfficePreview (xlsx + mammoth ~850KB) 用 lazy 包，
+// 只在用户真正打开远程文件编辑 / Office 预览时才加载，初始 bundle 大幅缩水。
+import { lazy, Suspense } from "react";
 import { ImagePreview, isImagePath } from "./ImagePreview";
-import { OfficePreview, isOfficePath } from "./OfficePreview";
+import { isOfficePath } from "./OfficePreview";
+const FileEditor = lazy(() =>
+  import("./FileEditor").then((m) => ({ default: m.FileEditor })),
+);
+const OfficePreview = lazy(() =>
+  import("./OfficePreview").then((m) => ({ default: m.OfficePreview })),
+);
 import { useState } from "react";
 import { usePrefs } from "../stores/prefs";
 import { findTheme } from "../lib/themes";
@@ -511,11 +519,13 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
         )}
       </div>
       {editFile && session?.backendId && (
-        <FileEditor
-          backendId={session.backendId}
-          remotePath={editFile}
-          onClose={() => setEditFile(null)}
-        />
+        <Suspense fallback={<LazyLoadingMask label="加载编辑器…" />}>
+          <FileEditor
+            backendId={session.backendId}
+            remotePath={editFile}
+            onClose={() => setEditFile(null)}
+          />
+        </Suspense>
       )}
       {previewImage && session?.backendId && (
         <ImagePreview
@@ -525,11 +535,13 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
         />
       )}
       {previewOffice && session?.backendId && (
-        <OfficePreview
-          backendId={session.backendId}
-          remotePath={previewOffice}
-          onClose={() => setPreviewOffice(null)}
-        />
+        <Suspense fallback={<LazyLoadingMask label="加载文档预览…" />}>
+          <OfficePreview
+            backendId={session.backendId}
+            remotePath={previewOffice}
+            onClose={() => setPreviewOffice(null)}
+          />
+        </Suspense>
       )}
       {dropFiles.length > 0 && session?.backendId && (
         <UploadDialog
@@ -539,6 +551,17 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
           onClose={() => setDropFiles([])}
         />
       )}
+    </div>
+  );
+}
+
+function LazyLoadingMask({ label }: { label: string }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="flex items-center gap-3 rounded-lg border border-neutral-700 bg-neutral-900 px-5 py-3 shadow-2xl">
+        <span className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-700 border-t-blue-500" />
+        <span className="text-sm text-neutral-300">{label}</span>
+      </div>
     </div>
   );
 }

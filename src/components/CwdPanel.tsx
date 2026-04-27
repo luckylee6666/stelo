@@ -273,7 +273,12 @@ export function CwdPanel({ backendId, cwd: cwdProp, onClose, onOpenFile }: Props
     }
   };
 
-  const visible = entries?.filter((e) => showHidden || !e.name.startsWith(".")) ?? [];
+  const allFiltered = entries?.filter((e) => showHidden || !e.name.startsWith(".")) ?? [];
+  // 保护性渲染上限：避免单目录 10k+ 文件时 DOM 卡死
+  // 1000+ 时用户基本会通过搜索 / cd 进子目录定位，渲染前 1000 已经足够
+  const RENDER_CAP = 1000;
+  const truncated = allFiltered.length > RENDER_CAP;
+  const visible = truncated ? allFiltered.slice(0, RENDER_CAP) : allFiltered;
   const pct =
     download && download.total > 0
       ? (download.transferred / download.total) * 100
@@ -349,6 +354,11 @@ export function CwdPanel({ backendId, cwd: cwdProp, onClose, onOpenFile }: Props
             {visible.length === 0 && (
               <div className="py-6 text-center text-xs text-neutral-600">
                 空目录
+              </div>
+            )}
+            {truncated && (
+              <div className="px-2 py-2 text-[11px] text-amber-400">
+                ⚠ 目录有 {allFiltered.length} 个文件，仅渲染前 {RENDER_CAP} 个。请用搜索 / cd 进子目录定位。
               </div>
             )}
             {visible.map((e) => (

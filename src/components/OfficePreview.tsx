@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import * as XLSX from "xlsx";
-import mammoth from "mammoth";
 import DOMPurify from "dompurify";
 import { FileSpreadsheet, FileText, X } from "lucide-react";
+
+// xlsx (~600KB) / mammoth (~250KB) 都是非首屏关键路径——只在打开 Office 文件时才需要。
+// 用动态 import 让它们出现在独立 chunk，初始 bundle 缩水 ~850KB。
+const loadXlsx = () => import("xlsx");
+const loadMammoth = () => import("mammoth");
 
 // 远端 Office 文件经 mammoth/xlsx 转出 HTML 后**必须**经 DOMPurify 清理。
 // 恶意 .docx / .xlsx 可在 HTML 中嵌入 <script>/<img onerror=...>/<svg onload=...>，
@@ -92,6 +95,7 @@ export function OfficePreview({ backendId, remotePath, onClose }: Props) {
         const bytes = decodeB64(b64);
         if (SPREADSHEET_EXT.has(ext)) {
           try {
+            const XLSX = await loadXlsx();
             const wb = XLSX.read(bytes.buffer, { type: "array" });
             const list: Sheet[] = wb.SheetNames.map((name) => ({
               name,
@@ -103,6 +107,7 @@ export function OfficePreview({ backendId, remotePath, onClose }: Props) {
           }
         } else if (WORD_EXT.has(ext)) {
           try {
+            const mammoth = (await loadMammoth()).default;
             const result = await mammoth.convertToHtml({
               arrayBuffer: bytes.buffer as ArrayBuffer,
             });
