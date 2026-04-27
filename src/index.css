@@ -1,0 +1,145 @@
+@import "tailwindcss";
+@import "@xterm/xterm/css/xterm.css";
+
+/* 主题调色板：切换 html[data-theme] 时整套 UI 变色 */
+:root,
+:root[data-theme="neutral"] {
+  --app: #171717;
+  --panel: #0a0a0a;
+  --elev: #262626;
+  --border: #404040;
+  --fg: #e5e5e5;
+  --fg-strong: #fafafa;
+  --muted: #737373;
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+}
+
+:root[data-theme="dracula"] {
+  --app: #282a36;
+  --panel: #21222c;
+  --elev: #44475a;
+  --border: #44475a;
+  --fg: #f8f8f2;
+  --fg-strong: #ffffff;
+  --muted: #6272a4;
+  --accent: #bd93f9;
+  --accent-hover: #d6acff;
+}
+
+:root[data-theme="solarized-dark"] {
+  --app: #002b36;
+  --panel: #001e26;
+  --elev: #073642;
+  --border: #073642;
+  --fg: #93a1a1;
+  --fg-strong: #eee8d5;
+  --muted: #586e75;
+  --accent: #268bd2;
+  --accent-hover: #2aa198;
+}
+
+:root[data-theme="tokyo-night"] {
+  --app: #1a1b26;
+  --panel: #16161e;
+  --elev: #24283b;
+  --border: #2f334d;
+  --fg: #c0caf5;
+  --fg-strong: #ffffff;
+  --muted: #565f89;
+  --accent: #7aa2f7;
+  --accent-hover: #9ab3fb;
+}
+
+:root[data-theme="gruvbox-dark"] {
+  --app: #282828;
+  --panel: #1d2021;
+  --elev: #3c3836;
+  --border: #504945;
+  --fg: #ebdbb2;
+  --fg-strong: #fbf1c7;
+  --muted: #a89984;
+  --accent: #83a598;
+  --accent-hover: #8ec07c;
+}
+
+:root[data-theme="solarized-light"] {
+  --app: #fdf6e3;
+  --panel: #eee8d5;
+  --elev: #e3dbc0;
+  --border: #c6bda0;
+  --fg: #586e75;
+  --fg-strong: #073642;
+  --muted: #93a1a1;
+  --accent: #268bd2;
+  --accent-hover: #2aa198;
+}
+
+:root[data-theme="stelo-light"] {
+  --app: #ffffff;
+  --panel: #fafafa;
+  --elev: #f1f5f9;
+  --border: #e2e8f0;
+  --fg: #1e293b;
+  --fg-strong: #0f172a;
+  --muted: #94a3b8;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+}
+
+:root[data-theme="stelo-dark"] {
+  --app: #000000;
+  --panel: #0a0a0a;
+  --elev: #141414;
+  --border: #2d2d2d;
+  --fg: #e5e5e5;
+  --fg-strong: #ffffff;
+  --muted: #737373;
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+}
+
+/* 把 Tailwind 内置的 neutral 色阶接到主题变量上。
+   现有 bg-neutral-900 / border-neutral-800 / text-neutral-400 等自动跟随主题。 */
+@theme {
+  --color-neutral-50: var(--fg-strong);
+  --color-neutral-100: var(--fg-strong);
+  --color-neutral-200: var(--fg);
+  --color-neutral-300: var(--fg);
+  --color-neutral-400: var(--muted);
+  --color-neutral-500: var(--muted);
+  --color-neutral-600: var(--muted);
+  --color-neutral-700: var(--border);
+  --color-neutral-800: var(--elev);
+  --color-neutral-900: var(--app);
+  --color-neutral-950: var(--panel);
+
+  --color-blue-500: var(--accent-hover);
+  --color-blue-600: var(--accent);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--app);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--muted);
+  border-radius: 4px;
+  opacity: 0.5;
+}
+.xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
