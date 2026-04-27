@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
 import {
   useAiStore,
   PRESETS,
@@ -236,6 +239,7 @@ function ProviderForm({
   const [remember, setRemember] = useState(true);
   const [keyExists, setKeyExists] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
   const firstRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -258,6 +262,69 @@ function ProviderForm({
     setKind(p.kind);
     setApiBase(p.apiBase);
     setModel(p.model);
+  };
+
+  /** 发一条最小请求验证 API key + apiBase + model 是否真的能工作 */
+  const testConnection = async () => {
+    if (testing) return;
+    if (!apiBase.trim() || !model.trim() || !apiKey.trim()) {
+      toast.warning("请先填 API Base / 模型 / API Key");
+      return;
+    }
+    setTesting(true);
+    try {
+      const t0 = performance.now();
+      const url =
+        kind === "claude"
+          ? `${apiBase.replace(/\/$/, "")}/v1/messages`
+          : `${apiBase.replace(/\/$/, "")}/chat/completions`;
+      const headers: Record<string, string> =
+        kind === "claude"
+          ? {
+              Authorization: `Bearer ${apiKey}`,
+              "x-api-key": apiKey,
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+            }
+          : {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+            };
+      const body =
+        kind === "claude"
+          ? {
+              model: model.trim(),
+              max_tokens: 8,
+              messages: [{ role: "user", content: "hi" }],
+            }
+          : {
+              model: model.trim(),
+              messages: [{ role: "user", content: "hi" }],
+              max_tokens: 8,
+            };
+      const res = await tauriFetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+      const elapsed = Math.round(performance.now() - t0);
+      if (res.ok) {
+        toast.success(`连接成功（${elapsed}ms）`, {
+          description: `${name || "Provider"} · ${model}`,
+        });
+      } else {
+        const txt = await res.text();
+        // 截短并避免回显 API key
+        const safe = txt
+          .replace(new RegExp(apiKey, "g"), "***")
+          .slice(0, 240);
+        toast.error(`API 返回 ${res.status}`, { description: safe });
+      }
+    } catch (e) {
+      toast.error("连接失败", { description: String(e) });
+    } finally {
+      setTesting(false);
+    }
   };
 
   const submit = (e: React.FormEvent<HTMLFormElement>) => {
@@ -400,20 +467,36 @@ function ProviderForm({
           </div>
         )}
 
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-5 flex items-center justify-between gap-2">
           <button
             type="button"
-            onClick={onCancel}
-            className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800"
+            onClick={testConnection}
+            disabled={testing}
+            className="flex items-center gap-1.5 rounded border border-emerald-700 bg-emerald-950/40 px-3 py-1.5 text-sm font-medium text-emerald-200 hover:bg-emerald-900/40"
+            title="发一条最小请求验证 API Key 是否有效"
           >
-            取消
+            {testing ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <span>⚡</span>
+            )}
+            测试连接
           </button>
-          <button
-            type="submit"
-            className="rounded bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
-          >
-            保存
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800"
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              className="rounded bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
+            >
+              保存
+            </button>
+          </div>
         </div>
       </form>
     </div>

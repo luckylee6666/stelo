@@ -27,6 +27,8 @@ const en: Dict = {
   "welcome.secondary.group": "Session groups / color tags",
   "welcome.secondary.creds": "Secure local credential store",
   "welcome.secondary.themes": "Dark / light themes",
+  "welcome.cta.newSession": "Add your first session",
+  "welcome.cta.shortcuts": "Keyboard shortcuts",
   "welcome.kbd.newSession": "New session",
   "welcome.kbd.palette": "Command palette",
   "welcome.kbd.ai": "AI assistant",

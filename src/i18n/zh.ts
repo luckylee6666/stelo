@@ -27,6 +27,8 @@ const zh: Dict = {
   "welcome.secondary.group": "会话分组 / 颜色标签",
   "welcome.secondary.creds": "凭据安全本地存",
   "welcome.secondary.themes": "暗色 / 亮色主题",
+  "welcome.cta.newSession": "添加第一个会话",
+  "welcome.cta.shortcuts": "快捷键速查",
   "welcome.kbd.newSession": "新建会话",
   "welcome.kbd.palette": "命令面板",
   "welcome.kbd.ai": "AI 助手",

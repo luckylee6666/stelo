@@ -10,6 +10,7 @@ import { AiPanel } from "./components/AiPanel";
 import { AiManagerDialog } from "./components/AiManagerDialog";
 import { HostKeyMismatchDialog } from "./components/HostKeyMismatchDialog";
 import { DialogHost } from "./components/DialogHost";
+import { ShortcutsDialog } from "./components/ShortcutsDialog";
 import { useSessionStore } from "./stores/sessions";
 import { loadAll, startAutoSave } from "./lib/persistence";
 import { usePrefs } from "./stores/prefs";
@@ -26,6 +27,7 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiMgrOpen, setAiMgrOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   useEffect(() => {
     const apply = () => {
@@ -88,6 +90,19 @@ function App() {
         e.preventDefault();
         e.stopPropagation();
         window.dispatchEvent(new CustomEvent("hyper:terminal-find"));
+      } else if (k === "/" || (k === "?" && e.shiftKey)) {
+        // ⌘/ 或 ⌘? 打开快捷键速查（macOS 原生 ⌘? 是 ⌘+Shift+/）
+        e.preventDefault();
+        e.stopPropagation();
+        setShortcutsOpen((v) => !v);
+      } else if (/^[1-9]$/.test(k)) {
+        // ⌘1 ~ ⌘9 切到第 N 个 tab
+        e.preventDefault();
+        e.stopPropagation();
+        const idx = parseInt(k, 10) - 1;
+        const st = useSessionStore.getState();
+        const target = st.sessions[idx];
+        if (target) st.setActive(target.id);
       }
     };
     window.addEventListener("keydown", onKey, true);
@@ -98,11 +113,14 @@ function App() {
   useEffect(() => {
     const openAi = () => setAiOpen(true);
     const openMgr = () => setAiMgrOpen(true);
+    const openShortcuts = () => setShortcutsOpen(true);
     window.addEventListener("hyper:open-ai", openAi);
     window.addEventListener("hyper:open-ai-mgr", openMgr);
+    window.addEventListener("hyper:open-shortcuts", openShortcuts);
     return () => {
       window.removeEventListener("hyper:open-ai", openAi);
       window.removeEventListener("hyper:open-ai-mgr", openMgr);
+      window.removeEventListener("hyper:open-shortcuts", openShortcuts);
     };
   }, []);
 
@@ -144,6 +162,7 @@ function App() {
         onClose={() => setPaletteOpen(false)}
       />
       {aiMgrOpen && <AiManagerDialog onClose={() => setAiMgrOpen(false)} />}
+      {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
       <HostKeyMismatchDialog />
       <DialogHost />
       <Toaster
@@ -209,6 +228,23 @@ function Welcome() {
         <p className="mt-3 text-base text-neutral-400">
           {t("welcome.subtitle")}
         </p>
+
+        <div className="mt-5 flex gap-2">
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent("hyper:new-session"))}
+            className="s-btn s-btn-primary"
+          >
+            ＋ {t("welcome.cta.newSession")}
+          </button>
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent("hyper:open-shortcuts"))}
+            className="s-btn s-btn-secondary"
+          >
+            ⌨ {t("welcome.cta.shortcuts")}
+          </button>
+        </div>
 
         <div className="mt-8 grid grid-cols-3 gap-2.5">
           {features.map((f) => (
