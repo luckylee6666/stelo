@@ -1,7 +1,13 @@
 {
-  "name": "hypershell",
+  "name": "stelo",
   "private": true,
   "version": "0.1.0",
+  "description": "Stelo — a modern SSH terminal with a built-in AI ops agent",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/luckylee6666/stelo.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
