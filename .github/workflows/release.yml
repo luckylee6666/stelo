@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Allow the job to create / update the GitHub Release.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS — Apple Silicon (arm64). macos-latest runners are already arm64.
+          - label: macOS arm64
+            os: macos-latest
+            rust-target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin"
+
+          # Windows x64 — native build, produces both NSIS (.exe) and WiX (.msi).
+          - label: Windows x64
+            os: windows-latest
+            rust-target: x86_64-pc-windows-msvc
+            args: "--target x86_64-pc-windows-msvc"
+
+          # Windows arm64 — cross-compiled on the x64 runner. NSIS only
+          # (WiX/MSI cross-compilation for arm64 is unreliable).
+          - label: Windows arm64
+            os: windows-latest
+            rust-target: aarch64-pc-windows-msvc
+            args: "--target aarch64-pc-windows-msvc --bundles nsis"
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # pnpm version comes from the "packageManager" field in package.json.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: ${{ matrix.rust-target }}
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the app & upload to the release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Stelo ${{ github.ref_name }}"
+          releaseBody: "Download the installer for your platform from the assets below. Builds are not yet code-signed — see the README for how to get past Gatekeeper / SmartScreen."
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
