@@ -112,7 +112,7 @@ Grab a build from the [**Releases**](https://github.com/luckylee6666/stelo/relea
 | Platform | Asset |
 |---|---|
 | macOS (Apple Silicon, arm64) | `Stelo_x.y.z_aarch64.dmg` |
-| Windows x64 | `Stelo_x.y.z_x64-setup.exe` / `Stelo_x.y.z_x64_en-US.msi` |
+| Windows x64 | `Stelo_x.y.z_x64-setup.exe` |
 | Windows arm64 | `Stelo_x.y.z_arm64-setup.exe` |
 
 > **Not code-signed yet** (Apple Developer is $99/yr, Windows EV cert is also paid — not purchased yet).
@@ -261,7 +261,7 @@ SSH 工具的命脉。详见 [SECURITY.md](./SECURITY.md)。
 | 平台 | 文件 |
 |---|---|
 | macOS（Apple Silicon / arm64） | `Stelo_x.y.z_aarch64.dmg` |
-| Windows x64 | `Stelo_x.y.z_x64-setup.exe` / `Stelo_x.y.z_x64_en-US.msi` |
+| Windows x64 | `Stelo_x.y.z_x64-setup.exe` |
 | Windows arm64 | `Stelo_x.y.z_arm64-setup.exe` |
 
 > **暂未代码签名**（Apple Developer $99/年、Windows EV 证书也要钱，都还没买）。

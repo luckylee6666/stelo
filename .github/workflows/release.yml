@@ -22,11 +22,13 @@ jobs:
             rust-target: aarch64-apple-darwin
             args: "--target aarch64-apple-darwin"
 
-          # Windows x64 — native build, produces both NSIS (.exe) and WiX (.msi).
+          # Windows x64 — NSIS installer (.exe). WiX/MSI bundling is skipped on
+          # purpose: it's flakier in CI and NSIS is the better default (no admin
+          # required, embeds the WebView2 bootstrapper).
           - label: Windows x64
             os: windows-latest
             rust-target: x86_64-pc-windows-msvc
-            args: "--target x86_64-pc-windows-msvc"
+            args: "--target x86_64-pc-windows-msvc --bundles nsis"
 
           # Windows arm64 — cross-compiled on the x64 runner. NSIS only
           # (WiX/MSI cross-compilation for arm64 is unreliable).
